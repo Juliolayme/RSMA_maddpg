@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Iterable, Tuple
 
 import numpy as np
 import torch
@@ -29,8 +29,30 @@ class TD3Config:
     target_noise_std: float = 0.2
     target_noise_clip: float = 0.5
     update_actor_interval: int = 2
+    learning_starts: int = 1000
+    max_grad_norm: float = 1.0
+    alpha_action_indices: Tuple[int, ...] = ()
     checkpoint_dir: str = "tmp/TD3"
     checkpoint_name: str = "rsma_td3"
+
+
+class OUNoise:
+    """Ornstein-Uhlenbeck noise process for smoother exploration."""
+
+    def __init__(self, action_dim: int, theta: float = 0.15, sigma: float = 0.2, dt: float = 1e-2) -> None:
+        self.action_dim = action_dim
+        self.theta = theta
+        self.sigma = sigma
+        self.dt = dt
+        self.state = np.zeros(action_dim, dtype=np.float32)
+
+    def reset(self) -> None:
+        self.state = np.zeros(self.action_dim, dtype=np.float32)
+
+    def sample(self) -> np.ndarray:
+        dx = self.theta * (-self.state) * self.dt + self.sigma * np.sqrt(self.dt) * np.random.randn(self.action_dim)
+        self.state = self.state + dx
+        return self.state.astype(np.float32)
 
 
 class ReplayBuffer:
@@ -92,6 +114,20 @@ class MLP(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
 
+    def set_output_bias(self, indices: Iterable[int], value: float) -> None:
+        """Set selected output biases in the final linear layer."""
+        final_layer = None
+        for module in reversed(self.net):
+            if isinstance(module, nn.Linear):
+                final_layer = module
+                break
+        if final_layer is None:
+            return
+        with torch.no_grad():
+            for idx in indices:
+                if 0 <= idx < final_layer.bias.numel():
+                    final_layer.bias[idx] = value
+
 
 class TD3Agent:
     """Centralized TD3 agent that controls the joint action of both BSs."""
@@ -101,6 +137,9 @@ class TD3Agent:
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.memory = ReplayBuffer(config.max_size, config.state_dim, config.action_dim)
         self.learn_step_cntr = 0
+        self.ou_noise = OUNoise(config.action_dim)
+        self.base_actor_lr = config.actor_lr
+        self.base_critic_lr = config.critic_lr
 
         self.actor = MLP(config.state_dim, config.hidden_dims, config.action_dim, final_tanh=True).to(self.device)
         self.target_actor = MLP(config.state_dim, config.hidden_dims, config.action_dim, final_tanh=True).to(self.device)
@@ -116,16 +155,22 @@ class TD3Agent:
         self.target_actor.load_state_dict(self.actor.state_dict())
         self.target_critic_1.load_state_dict(self.critic_1.state_dict())
         self.target_critic_2.load_state_dict(self.critic_2.state_dict())
+        self.actor.set_output_bias(config.alpha_action_indices, 0.0)
+        self.target_actor.set_output_bias(config.alpha_action_indices, 0.0)
+
+    def reset_noise(self) -> None:
+        """Reset temporally correlated exploration noise."""
+        self.ou_noise.reset()
 
     def choose_action(self, state: np.ndarray, noise_scale: float = 0.0) -> np.ndarray:
-        """Return a joint action optionally perturbed by Gaussian exploration noise."""
+        """Return a joint action optionally perturbed by OU exploration noise."""
         self.actor.eval()
         state_t = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
         with torch.no_grad():
             action = self.actor(state_t).squeeze(0).cpu().numpy()
         self.actor.train()
         if noise_scale > 0.0:
-            action = action + np.random.normal(0.0, noise_scale, size=action.shape)
+            action = action + noise_scale * self.ou_noise.sample()
         return np.clip(action, -1.0, 1.0).astype(np.float32)
 
     def remember(self, state: np.ndarray, action: np.ndarray, reward: float, next_state: np.ndarray, done: bool) -> None:
@@ -134,7 +179,7 @@ class TD3Agent:
 
     def learn(self) -> None:
         """Run one TD3 update if sufficient samples are available."""
-        if self.memory.mem_cntr < self.config.batch_size:
+        if self.memory.mem_cntr < max(self.config.batch_size, self.config.learning_starts):
             return
 
         state, action, reward, next_state, done = self.memory.sample_buffer(self.config.batch_size)
@@ -166,10 +211,12 @@ class TD3Agent:
 
         self.critic_1_optimizer.zero_grad()
         loss_q1.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic_1.parameters(), self.config.max_grad_norm)
         self.critic_1_optimizer.step()
 
         self.critic_2_optimizer.zero_grad()
         loss_q2.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic_2.parameters(), self.config.max_grad_norm)
         self.critic_2_optimizer.step()
 
         self.learn_step_cntr += 1
@@ -181,8 +228,17 @@ class TD3Agent:
         actor_loss = -self.critic_1(actor_input).mean()
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.config.max_grad_norm)
         self.actor_optimizer.step()
         self._soft_update()
+
+    def set_learning_rates(self, actor_lr: float, critic_lr: float) -> None:
+        """Update optimizer learning rates."""
+        for param_group in self.actor_optimizer.param_groups:
+            param_group["lr"] = actor_lr
+        for optimizer in (self.critic_1_optimizer, self.critic_2_optimizer):
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = critic_lr
 
     def _soft_update(self) -> None:
         for target_param, param in zip(self.target_actor.parameters(), self.actor.parameters()):

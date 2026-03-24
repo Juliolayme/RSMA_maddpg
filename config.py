@@ -20,8 +20,8 @@ class TrainConfig:
     time_varying: bool = False
     csit_error_std: float = 0.0
     beta_reward: float = 0.5
-    episodes: int = 300
-    steps: int = 100
+    episodes: int = 1000
+    steps: int = 200
     seed: int = 42
     project: str | None = None
     actor_lr: float = 1e-4
@@ -32,9 +32,16 @@ class TrainConfig:
     replay_size: int = 100000
     hidden_dims: Tuple[int, int, int] = (256, 256, 128)
     exploration_noise: float = 0.2
+    epsilon_start: float = 0.5
+    epsilon_end: float = 0.05
+    epsilon_decay_fraction: float = 0.7
     target_noise_std: float = 0.2
     target_noise_clip: float = 0.5
     update_actor_interval: int = 2
+    lr_warmup_fraction: float = 0.1
+    learning_starts: int = 1000
+    max_grad_norm: float = 1.0
+    alpha_min: float = 0.05
     agent_controls_decoding: bool = False
     eval_episodes: int = 1000
     outage_threshold: float = 0.5
@@ -57,8 +64,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--time-varying", action="store_true")
     parser.add_argument("--csit-error", type=float, default=0.0, dest="csit_error_std")
     parser.add_argument("--beta-reward", type=float, default=0.5, dest="beta_reward")
-    parser.add_argument("--episodes", type=int, default=300)
-    parser.add_argument("--steps", type=int, default=100)
+    parser.add_argument("--episodes", type=int, default=1000)
+    parser.add_argument("--steps", type=int, default=200)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--project", type=str, default=None)
     parser.add_argument("--actor-lr", type=float, default=1e-4, dest="actor_lr")
@@ -68,9 +75,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=128, dest="batch_size")
     parser.add_argument("--replay-size", type=int, default=100000, dest="replay_size")
     parser.add_argument("--exploration-noise", type=float, default=0.2, dest="exploration_noise")
+    parser.add_argument("--epsilon-start", type=float, default=0.5, dest="epsilon_start")
+    parser.add_argument("--epsilon-end", type=float, default=0.05, dest="epsilon_end")
+    parser.add_argument("--epsilon-decay-fraction", type=float, default=0.7, dest="epsilon_decay_fraction")
     parser.add_argument("--target-noise-std", type=float, default=0.2, dest="target_noise_std")
     parser.add_argument("--target-noise-clip", type=float, default=0.5, dest="target_noise_clip")
     parser.add_argument("--update-actor-interval", type=int, default=2, dest="update_actor_interval")
+    parser.add_argument("--lr-warmup-fraction", type=float, default=0.1, dest="lr_warmup_fraction")
+    parser.add_argument("--learning-starts", type=int, default=1000, dest="learning_starts")
+    parser.add_argument("--max-grad-norm", type=float, default=1.0, dest="max_grad_norm")
+    parser.add_argument("--alpha-min", type=float, default=0.05, dest="alpha_min")
     parser.add_argument("--agent-controls-decoding", action="store_true")
     parser.add_argument("--eval-episodes", type=int, default=1000, dest="eval_episodes")
     parser.add_argument("--outage-threshold", type=float, default=0.5, dest="outage_threshold")

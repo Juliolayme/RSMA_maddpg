@@ -52,19 +52,28 @@ def _mean_baselines(config: TrainConfig, samples: int = 50) -> Dict[str, float]:
 def experiment_sum_rate_vs_snr(base_config: TrainConfig) -> None:
     snrs = np.arange(0.0, 45.0, 5.0)
     td3_rates, maddpg_rates = [], []
+    td3_std = []
     noma_rates, sdma_rates, no_rs_rates = [], [], []
     td3_alpha, td3_split = [], []
 
     for p_max in snrs:
-        cfg_td3 = TrainConfig(**{**serialize_config(base_config), "algorithm": "td3", "P_max_dBm": float(p_max), "project": f"exp1_td3_{int(p_max)}"})
+        td3_seed_results = []
+        td3_alpha_seed = []
+        td3_split_seed = []
+        for seed in base_config.seeds_for_curve[:3]:
+            cfg_td3 = TrainConfig(**{**serialize_config(base_config), "algorithm": "td3", "P_max_dBm": float(p_max), "seed": int(seed), "project": f"exp1_td3_{int(p_max)}_seed{seed}"})
+            td3_result = train_rsma(cfg_td3)
+            td3_seed_results.append(td3_result["summary"]["final_avg_sum_rate"])
+            td3_alpha_seed.append(td3_result["summary"]["final_avg_power_common_ratio"])
+            td3_split_seed.append(td3_result["summary"]["final_avg_common_split_ratio"])
         cfg_maddpg = TrainConfig(**{**serialize_config(base_config), "algorithm": "maddpg", "P_max_dBm": float(p_max), "project": f"exp1_maddpg_{int(p_max)}"})
-        td3_result = train_rsma(cfg_td3)
         maddpg_result = train_rsma(cfg_maddpg)
         baselines = _mean_baselines(cfg_td3)
-        td3_rates.append(td3_result["summary"]["final_avg_sum_rate"])
+        td3_rates.append(float(np.mean(td3_seed_results)))
+        td3_std.append(float(np.std(td3_seed_results)))
         maddpg_rates.append(maddpg_result["summary"]["final_avg_sum_rate"])
-        td3_alpha.append(td3_result["summary"]["final_avg_power_common_ratio"])
-        td3_split.append(td3_result["summary"]["final_avg_common_split_ratio"])
+        td3_alpha.append(float(np.mean(td3_alpha_seed)))
+        td3_split.append(float(np.mean(td3_split_seed)))
         noma_rates.append(baselines["noma"])
         sdma_rates.append(baselines["sdma"])
         no_rs_rates.append(baselines["no_rs"])
@@ -73,6 +82,7 @@ def experiment_sum_rate_vs_snr(base_config: TrainConfig) -> None:
         "sum_rate_vs_snr.npz",
         snr_dbm=snrs,
         td3_rsma=np.asarray(td3_rates),
+        td3_rsma_std=np.asarray(td3_std),
         maddpg_rsma=np.asarray(maddpg_rates),
         noma=np.asarray(noma_rates),
         sdma=np.asarray(sdma_rates),
@@ -130,20 +140,26 @@ def experiment_csit_error(base_config: TrainConfig) -> None:
 
 def experiment_convergence(base_config: TrainConfig) -> None:
     td3_curves, maddpg_curves = [], []
+    noma_values, sdma_values = [], []
     for seed in base_config.seeds_for_curve:
-        cfg_td3 = TrainConfig(**{**serialize_config(base_config), "algorithm": "td3", "seed": int(seed), "project": f"conv_td3_seed{seed}"})
-        cfg_maddpg = TrainConfig(**{**serialize_config(base_config), "algorithm": "maddpg", "seed": int(seed), "project": f"conv_maddpg_seed{seed}"})
+        cfg_td3 = TrainConfig(**{**serialize_config(base_config), "algorithm": "td3", "seed": int(seed), "episodes": 1000, "steps": 200, "project": f"conv_td3_seed{seed}"})
+        cfg_maddpg = TrainConfig(**{**serialize_config(base_config), "algorithm": "maddpg", "seed": int(seed), "episodes": 1000, "steps": 200, "project": f"conv_maddpg_seed{seed}"})
         result_td3 = train_rsma(cfg_td3)
         result_maddpg = train_rsma(cfg_maddpg)
         td3_dir = result_td3["result_dir"]
         maddpg_dir = result_maddpg["result_dir"]
-        td3_curves.append(np.load(os.path.join(td3_dir, "episode_sum_rates.npy")))
-        maddpg_curves.append(np.load(os.path.join(maddpg_dir, "episode_sum_rates.npy")))
+        td3_curves.append(np.load(os.path.join(td3_dir, "running_avg_sum_rate.npy")))
+        maddpg_curves.append(np.load(os.path.join(maddpg_dir, "running_avg_sum_rate.npy")))
+        baselines = _mean_baselines(cfg_td3)
+        noma_values.append(baselines["noma"])
+        sdma_values.append(baselines["sdma"])
 
     np.savez(
         "convergence.npz",
         td3_curves=np.asarray(td3_curves, dtype=float),
         maddpg_curves=np.asarray(maddpg_curves, dtype=float),
+        noma=np.asarray(noma_values, dtype=float),
+        sdma=np.asarray(sdma_values, dtype=float),
     )
 
 
@@ -188,8 +204,8 @@ def main() -> None:
         noise_power_dBm=-80.0,
         channel_type="rayleigh",
         csit_error_std=0.0,
-        episodes=150,
-        steps=50,
+        episodes=500,
+        steps=200,
         project=None,
     )
     experiment_sum_rate_vs_snr(base_config)

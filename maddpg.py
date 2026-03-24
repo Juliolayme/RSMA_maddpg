@@ -29,8 +29,29 @@ class MADDPGConfig:
     max_size: int = 100000
     hidden_dims: Tuple[int, int, int] = (256, 256, 128)
     exploration_noise: float = 0.2
+    learning_starts: int = 1000
+    max_grad_norm: float = 1.0
     checkpoint_dir: str = "tmp/MADDPG"
     checkpoint_name: str = "rsma_maddpg"
+
+
+class OUNoise:
+    """Ornstein-Uhlenbeck noise process."""
+
+    def __init__(self, action_dim: int, theta: float = 0.15, sigma: float = 0.2, dt: float = 1e-2) -> None:
+        self.action_dim = action_dim
+        self.theta = theta
+        self.sigma = sigma
+        self.dt = dt
+        self.state = np.zeros(action_dim, dtype=np.float32)
+
+    def reset(self) -> None:
+        self.state = np.zeros(self.action_dim, dtype=np.float32)
+
+    def sample(self) -> np.ndarray:
+        dx = self.theta * (-self.state) * self.dt + self.sigma * np.sqrt(self.dt) * np.random.randn(self.action_dim)
+        self.state = self.state + dx
+        return self.state.astype(np.float32)
 
 
 class ReplayBuffer:
@@ -129,6 +150,14 @@ class MADDPG:
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.memory = ReplayBuffer(config.max_size, config.state_dim, config.obs_dim, config.action_dim, config.num_agents)
         self.agents = [AgentNetworks(config, idx, self.device) for idx in range(config.num_agents)]
+        self.noises = [OUNoise(config.action_dim) for _ in range(config.num_agents)]
+        self.base_actor_lr = config.actor_lr
+        self.base_critic_lr = config.critic_lr
+
+    def reset_noise(self) -> None:
+        """Reset OU noise for all agents."""
+        for noise in self.noises:
+            noise.reset()
 
     def choose_action(self, obs_n, noise_scale: float = 1.0):
         """Choose local actions for all agents."""
@@ -139,7 +168,7 @@ class MADDPG:
             with torch.no_grad():
                 action = self.agents[idx].actor(obs_t).squeeze(0).cpu().numpy()
             self.agents[idx].actor.train()
-            noise = np.random.normal(0.0, self.config.exploration_noise * noise_scale, size=action.shape)
+            noise = self.noises[idx].sample() * self.config.exploration_noise * noise_scale
             actions.append(np.clip(action + noise, -1.0, 1.0).astype(np.float32))
         return actions
 
@@ -149,7 +178,7 @@ class MADDPG:
 
     def learn(self) -> None:
         """Run one MADDPG update step."""
-        if self.memory.mem_cntr < self.config.batch_size:
+        if self.memory.mem_cntr < max(self.config.batch_size, self.config.learning_starts):
             return
 
         obs, state, actions, rewards, next_obs, next_state, done = self.memory.sample_buffer(self.config.batch_size)
@@ -178,6 +207,7 @@ class MADDPG:
             critic_loss = F.mse_loss(current_q, y)
             agent.critic_optimizer.zero_grad()
             critic_loss.backward()
+            torch.nn.utils.clip_grad_norm_(agent.critic.parameters(), self.config.max_grad_norm)
             agent.critic_optimizer.step()
 
             actor_actions = []
@@ -191,6 +221,7 @@ class MADDPG:
             actor_loss = -agent.critic(actor_input).mean()
             agent.actor_optimizer.zero_grad()
             actor_loss.backward()
+            torch.nn.utils.clip_grad_norm_(agent.actor.parameters(), self.config.max_grad_norm)
             agent.actor_optimizer.step()
 
             self._soft_update(agent.actor, agent.target_actor)
@@ -209,3 +240,11 @@ class MADDPG:
         """Load checkpoints for all agents."""
         for agent in self.agents:
             agent.load(self.device)
+
+    def set_learning_rates(self, actor_lr: float, critic_lr: float) -> None:
+        """Update actor and critic learning rates for all agents."""
+        for agent in self.agents:
+            for param_group in agent.actor_optimizer.param_groups:
+                param_group["lr"] = actor_lr
+            for param_group in agent.critic_optimizer.param_groups:
+                param_group["lr"] = critic_lr

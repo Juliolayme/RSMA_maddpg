@@ -90,8 +90,11 @@ class DataLogger:
         self.episode_common_rates: list[float] = []
         self.episode_power_common_ratio: list[float] = []
         self.episode_common_split_ratio: list[float] = []
+        self.episode_common_fraction: list[float] = []
+        self.episode_mean_alpha: list[float] = []
         self.episode_fairness: list[float] = []
         self.episode_user_rates: list[list[float]] = []
+        self.running_avg_sum_rate: list[float] = []
         self.baselines: dict[str, list[float]] = {}
 
     def log_episode(self, episode: int, env_history: Dict[str, list], score: float) -> None:
@@ -107,6 +110,7 @@ class DataLogger:
         power_private = np.asarray(env_history["power_private"], dtype=float)
         common_alloc = np.asarray(env_history["allocated_common_rates"], dtype=float)
         user_rates = np.asarray(env_history["user_rates"], dtype=float)
+        common_ratio_history = np.asarray(env_history["power_common_ratio"], dtype=float)
 
         total_power = power_common + np.sum(power_private, axis=1)
         common_sum = np.sum(common_alloc, axis=1)
@@ -122,8 +126,12 @@ class DataLogger:
         self.episode_common_rates.append(float(np.mean(common_rates)))
         self.episode_power_common_ratio.append(float(np.mean(power_common / (total_power + 1e-10))))
         self.episode_common_split_ratio.append(float(np.mean(split_ratio)))
+        self.episode_common_fraction.append(float(np.mean(common_rates / (sum_rates + 1e-10))))
+        self.episode_mean_alpha.append(float(np.mean(common_ratio_history)))
         self.episode_fairness.append(float(np.mean(fairness)))
         self.episode_user_rates.append(np.mean(user_rates, axis=0).tolist())
+        window = min(50, len(self.episode_sum_rates))
+        self.running_avg_sum_rate.append(float(np.mean(self.episode_sum_rates[-window:])))
 
     def log_baseline(self, name: str, value: float) -> None:
         """Append a baseline value under a given scheme name."""
@@ -142,8 +150,11 @@ class DataLogger:
             os.path.join(self.save_dir, "episode_common_split_ratio.npy"),
             np.asarray(self.episode_common_split_ratio, dtype=float),
         )
+        np.save(os.path.join(self.save_dir, "episode_common_fraction.npy"), np.asarray(self.episode_common_fraction, dtype=float))
+        np.save(os.path.join(self.save_dir, "episode_mean_alpha.npy"), np.asarray(self.episode_mean_alpha, dtype=float))
         np.save(os.path.join(self.save_dir, "episode_fairness.npy"), np.asarray(self.episode_fairness, dtype=float))
         np.save(os.path.join(self.save_dir, "episode_user_rates.npy"), np.asarray(self.episode_user_rates, dtype=float))
+        np.save(os.path.join(self.save_dir, "running_avg_sum_rate.npy"), np.asarray(self.running_avg_sum_rate, dtype=float))
 
         if self.baselines:
             np.savez(os.path.join(self.save_dir, "baseline_curves.npz"), **{
@@ -157,8 +168,10 @@ class DataLogger:
             "final_avg_common_rate": float(np.mean(self.episode_common_rates[-20:])) if self.episode_common_rates else 0.0,
             "final_avg_common_power_ratio": float(np.mean(self.episode_power_common_ratio[-20:])) if self.episode_power_common_ratio else 0.0,
             "final_avg_common_split_ratio": float(np.mean(self.episode_common_split_ratio[-20:])) if self.episode_common_split_ratio else 0.0,
+            "final_avg_common_fraction": float(np.mean(self.episode_common_fraction[-20:])) if self.episode_common_fraction else 0.0,
+            "final_avg_alpha": float(np.mean(self.episode_mean_alpha[-20:])) if self.episode_mean_alpha else 0.0,
             "final_avg_fairness": float(np.mean(self.episode_fairness[-20:])) if self.episode_fairness else 0.0,
-            "best_sum_rate": float(np.max(self.episode_sum_rates)) if self.episode_sum_rates else 0.0,
+            "best_sum_rate": float(np.max(self.running_avg_sum_rate)) if self.running_avg_sum_rate else 0.0,
         }
         with open(os.path.join(self.save_dir, "summary.json"), "w", encoding="utf-8") as file:
             json.dump(summary, file, indent=2)

@@ -69,6 +69,7 @@ class RSMA_Env:
         beta_reward: float = 0.5,
         step_num: int = 100,
         agent_controls_decoding: bool = False,
+        alpha_min: float = 0.05,
         seed: int = 42,
     ) -> None:
         self.M = M
@@ -90,7 +91,9 @@ class RSMA_Env:
         self.beta_reward = beta_reward
         self.step_num = step_num
         self.agent_controls_decoding = agent_controls_decoding
+        self.alpha_min = alpha_min
         self.rng = np.random.default_rng(seed)
+        self.best_sum_rate_so_far = 1.0
 
         self.obs_dim = 4 * M
         self.state_dim = 8 * M
@@ -240,6 +243,7 @@ class RSMA_Env:
         beta_c_raw = action[4 * self.M + 1]
 
         alpha = 0.5 * (alpha_raw + 1.0)
+        alpha = float(np.clip(alpha, self.alpha_min, 1.0))
         beta_c = 0.5 * (beta_c_raw + 1.0)
         decoded_order_bit = 0
         if self.agent_controls_decoding:
@@ -312,13 +316,17 @@ class RSMA_Env:
         c2 = float(a2["beta_c"]) * r_c2
         r1 = c1 + r_p1
         r2 = c2 + r_p2
-        reward = self.beta_reward * r1 + (1.0 - self.beta_reward) * r2
+        common_total = c1 + c2
+        fairness_term = 1.0 - abs(r1 - r2) / (r1 + r2 + 1e-10)
+        reward_raw = (r1 + r2) + 0.1 * common_total + self.beta_reward * fairness_term
+        reward = np.log1p(max(reward_raw, 0.0))
 
         return {
             "reward": float(reward),
             "sum_rate": float(r1 + r2),
             "user_rates": np.array([r1, r2], dtype=float),
             "common_capacity": np.array([r_c1, r_c2], dtype=float),
+            "common_total": float(common_total),
             "allocated_common_rates": np.array([c1, c2], dtype=float),
             "private_rates": np.array([r_p1, r_p2], dtype=float),
             "power_common": np.array([p1c, p2c], dtype=float),
@@ -354,6 +362,7 @@ class RSMA_Env:
         next_state = self._build_state()
         done = self.step_count >= self.step_num
 
+        self.best_sum_rate_so_far = max(self.best_sum_rate_so_far, float(best_result["sum_rate"]))
         reward = float(best_result["reward"])
         rewards = [reward, reward]
 
@@ -380,6 +389,7 @@ class RSMA_Env:
             "user_rates": best_result["user_rates"].copy(),
             "common_capacity": best_result["common_capacity"].copy(),
             "allocated_common_rates": best_result["allocated_common_rates"].copy(),
+            "common_total": float(best_result["common_total"]),
             "private_rates": best_result["private_rates"].copy(),
             "power_common": best_result["power_common"].copy(),
             "power_private": best_result["power_private"].copy(),

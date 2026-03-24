@@ -39,6 +39,7 @@ def _create_environment(config: TrainConfig) -> RSMA_Env:
         beta_reward=config.beta_reward,
         step_num=config.steps,
         agent_controls_decoding=config.agent_controls_decoding,
+        alpha_min=config.alpha_min,
         seed=config.seed,
     )
 
@@ -58,6 +59,10 @@ def _split_joint_action(env: RSMA_Env, joint_action: np.ndarray) -> List[np.ndar
 
 def _build_agent(config: TrainConfig, env: RSMA_Env):
     if config.algorithm == "td3":
+        alpha_indices = tuple(
+            idx * env.per_agent_action_dim + 4 * env.M
+            for idx in range(env.num_agents)
+        )
         return TD3Agent(
             TD3Config(
                 state_dim=env.state_dim,
@@ -72,6 +77,9 @@ def _build_agent(config: TrainConfig, env: RSMA_Env):
                 target_noise_std=config.target_noise_std,
                 target_noise_clip=config.target_noise_clip,
                 update_actor_interval=config.update_actor_interval,
+                learning_starts=config.learning_starts,
+                max_grad_norm=config.max_grad_norm,
+                alpha_action_indices=alpha_indices,
                 checkpoint_dir=os.path.join(config.checkpoint_dir, "TD3"),
                 checkpoint_name=_project_name(config),
             )
@@ -90,6 +98,8 @@ def _build_agent(config: TrainConfig, env: RSMA_Env):
             max_size=config.replay_size,
             hidden_dims=config.hidden_dims,
             exploration_noise=config.exploration_noise,
+            learning_starts=config.learning_starts,
+            max_grad_norm=config.max_grad_norm,
             checkpoint_dir=os.path.join(config.checkpoint_dir, "MADDPG"),
             checkpoint_name=_project_name(config),
         )
@@ -98,11 +108,27 @@ def _build_agent(config: TrainConfig, env: RSMA_Env):
 
 def _baseline_snapshot(env: RSMA_Env) -> Dict[str, float]:
     return {
-        "noma": compute_noma_sum_rate(env, num_samples=1),
-        "sdma": compute_sdma_sum_rate(env, num_samples=1),
-        "no_rs": compute_no_rs_sum_rate(env, num_samples=1),
-        "random": compute_random_baseline(env, num_samples=1),
+        "noma": compute_noma_sum_rate(env, num_samples=20),
+        "sdma": compute_sdma_sum_rate(env, num_samples=20),
+        "no_rs": compute_no_rs_sum_rate(env, num_samples=20),
+        "random": compute_random_baseline(env, num_samples=20),
     }
+
+
+def _epsilon_for_episode(config: TrainConfig, episode_idx: int) -> float:
+    decay_episodes = max(1, int(config.episodes * config.epsilon_decay_fraction))
+    if episode_idx >= decay_episodes:
+        return config.epsilon_end
+    ratio = episode_idx / decay_episodes
+    return config.epsilon_start + ratio * (config.epsilon_end - config.epsilon_start)
+
+
+def _lr_scale(config: TrainConfig, episode_idx: int) -> float:
+    warmup_episodes = max(1, int(config.episodes * config.lr_warmup_fraction))
+    if episode_idx < warmup_episodes:
+        return (episode_idx + 1) / warmup_episodes
+    anneal_progress = (episode_idx - warmup_episodes) / max(1, config.episodes - warmup_episodes)
+    return 0.5 * (1.0 + np.cos(np.pi * anneal_progress))
 
 
 def train_rsma(config: TrainConfig) -> Dict[str, object]:
@@ -122,20 +148,24 @@ def train_rsma(config: TrainConfig) -> Dict[str, object]:
     LOGGER.info("Environment: %s", env.get_system_info())
 
     best_score = -np.inf
+    best_running_avg = -np.inf
     last_info: Dict[str, object] = {}
 
     for episode_idx in range(config.episodes):
         obs_n, state = env.reset()
+        agent.reset_noise()
         score = 0.0
+        scale = _lr_scale(config, episode_idx)
+        agent.set_learning_rates(config.actor_lr * scale, config.critic_lr * scale)
         for _ in range(config.steps):
-            noise_scale = max(1.0 - episode_idx / max(config.episodes, 1), 0.1)
+            epsilon = _epsilon_for_episode(config, episode_idx)
             if config.algorithm == "td3":
-                joint_action = agent.choose_action(state, noise_scale=config.exploration_noise * noise_scale)
+                joint_action = agent.choose_action(state, noise_scale=epsilon)
                 actions_n = _split_joint_action(env, joint_action)
                 next_obs_n, next_state, rewards_n, done, info = env.step(actions_n)
                 agent.remember(state, joint_action, rewards_n[0], next_state, done)
             else:
-                actions_n = agent.choose_action(obs_n, noise_scale=noise_scale)
+                actions_n = agent.choose_action(obs_n, noise_scale=epsilon)
                 next_obs_n, next_state, rewards_n, done, info = env.step(actions_n)
                 agent.remember(obs_n, state, actions_n, rewards_n, next_obs_n, next_state, done)
 
@@ -151,25 +181,30 @@ def train_rsma(config: TrainConfig) -> Dict[str, object]:
         for name, value in baselines.items():
             logger.log_baseline(name, value)
 
+        current_running_avg = logger.running_avg_sum_rate[-1] if logger.running_avg_sum_rate else -np.inf
+        if current_running_avg > best_running_avg:
+            best_running_avg = current_running_avg
+            agent.save_models()
+
         if (episode_idx + 1) % 10 == 0:
             avg_sum = np.mean(logger.episode_sum_rates[-10:]) if logger.episode_sum_rates else 0.0
             avg_common = np.mean(logger.episode_common_rates[-10:]) if logger.episode_common_rates else 0.0
+            avg_common_fraction = np.mean(logger.episode_common_fraction[-10:]) if logger.episode_common_fraction else 0.0
             avg_fairness = np.mean(logger.episode_fairness[-10:]) if logger.episode_fairness else 0.0
             LOGGER.info(
-                "Ep %4d/%d | reward %.3f | sum-rate %.3f | common %.3f | fairness %.3f | alpha %s | split %.3f | order %s",
+                "Ep %4d/%d | reward %.3f | sum-rate %.3f | common %.3f | common/total %.3f | fairness %.3f | alpha %s | split %.3f | eps %.3f | order %s",
                 episode_idx + 1,
                 config.episodes,
                 score,
                 avg_sum,
                 avg_common,
+                avg_common_fraction,
                 avg_fairness,
                 np.array2string(np.asarray(last_info.get("alphas", [0.0, 0.0])), precision=3),
                 float(last_info.get("common_split_ratio", 0.0)),
+                epsilon,
                 last_info.get("decoding_order", (0, 0)),
             )
-
-        if (episode_idx + 1) % 50 == 0:
-            agent.save_models()
 
         best_score = max(best_score, score)
 
@@ -184,6 +219,8 @@ def train_rsma(config: TrainConfig) -> Dict[str, object]:
             "final_avg_common_rate": float(np.mean(logger.episode_common_rates[-20:])) if logger.episode_common_rates else 0.0,
             "final_avg_power_common_ratio": float(np.mean(logger.episode_power_common_ratio[-20:])) if logger.episode_power_common_ratio else 0.0,
             "final_avg_common_split_ratio": float(np.mean(logger.episode_common_split_ratio[-20:])) if logger.episode_common_split_ratio else 0.0,
+            "final_avg_common_fraction": float(np.mean(logger.episode_common_fraction[-20:])) if logger.episode_common_fraction else 0.0,
+            "best_running_avg_sum_rate": float(best_running_avg),
         },
     }
 
