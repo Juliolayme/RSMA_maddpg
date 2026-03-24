@@ -1,0 +1,17 @@
+{
+  "system": {
+    "M (antennas per BS)": 4,
+    "agents": 2,
+    "P_max (dBm)": 30,
+    "Noise power (dBm)": -80,
+    "Channel type": "rayleigh",
+    "Observation dim": 16,
+    "Global state dim": 32,
+    "Action dim per agent": 17,
+    "CSIT error std": 0.0,
+    "Time-varying": false
+  },
+  "episodes": 2,
+  "steps": 3,
+  "seed": 42
+}
