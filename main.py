@@ -181,9 +181,17 @@ def train_rsma(config: TrainConfig) -> Dict[str, object]:
         agent.set_learning_rates(config.actor_lr * scale, config.critic_lr * scale)
         for _ in range(config.steps):
             epsilon = _epsilon_for_episode(config, episode_idx)
+            warmup_alpha_phase = episode_idx < int(0.4 * config.episodes)
+            occasional_alpha_exploration = (
+                episode_idx >= int(0.4 * config.episodes) and np.random.random() < 0.1
+            )
             if config.algorithm == "td3":
                 joint_action = agent.choose_action(state, noise_scale=epsilon)
-                if episode_idx < int(0.2 * config.episodes):
+                if warmup_alpha_phase:
+                    for idx in range(env.num_agents):
+                        alpha = np.random.uniform(0.2, 0.8)
+                        joint_action[idx * env.per_agent_action_dim + 4 * env.M] = np.clip(2.0 * alpha - 1.0, -1.0, 1.0)
+                elif occasional_alpha_exploration:
                     for idx in range(env.num_agents):
                         alpha = np.random.uniform(0.1, 0.9)
                         joint_action[idx * env.per_agent_action_dim + 4 * env.M] = np.clip(2.0 * alpha - 1.0, -1.0, 1.0)
@@ -193,7 +201,11 @@ def train_rsma(config: TrainConfig) -> Dict[str, object]:
                 agent.remember(state, joint_action, normalized_reward, next_state, done)
             else:
                 actions_n = agent.choose_action(obs_n, noise_scale=epsilon)
-                if episode_idx < int(0.2 * config.episodes):
+                if warmup_alpha_phase:
+                    for action in actions_n:
+                        alpha = np.random.uniform(0.2, 0.8)
+                        action[4 * env.M] = np.clip(2.0 * alpha - 1.0, -1.0, 1.0)
+                elif occasional_alpha_exploration:
                     for action in actions_n:
                         alpha = np.random.uniform(0.1, 0.9)
                         action[4 * env.M] = np.clip(2.0 * alpha - 1.0, -1.0, 1.0)

@@ -43,7 +43,7 @@ class TrainConfig:
     lr_warmup_fraction: float = 0.1
     learning_starts: int = 1000
     max_grad_norm: float = 1.0
-    alpha_min: float = 0.0
+    alpha_min: float = 0.05
     agent_controls_decoding: bool = False
     diagnose: bool = False
     eval_episodes: int = 1000
@@ -89,7 +89,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lr-warmup-fraction", type=float, default=0.1, dest="lr_warmup_fraction")
     parser.add_argument("--learning-starts", type=int, default=1000, dest="learning_starts")
     parser.add_argument("--max-grad-norm", type=float, default=1.0, dest="max_grad_norm")
-    parser.add_argument("--alpha-min", type=float, default=0.0, dest="alpha_min")
+    parser.add_argument("--alpha-min", type=float, default=0.05, dest="alpha_min")
     parser.add_argument("--agent-controls-decoding", action="store_true")
     parser.add_argument("--diagnose", action="store_true")
     parser.add_argument("--eval-episodes", type=int, default=1000, dest="eval_episodes")

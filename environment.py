@@ -314,17 +314,34 @@ class RSMA_Env:
         r_p1 = np.log2(1.0 + sinr_p1)
         r_p2 = np.log2(1.0 + sinr_p2)
 
+        # Private-only reference with full power and no common-stream decoding.
+        s11_full = self._rx_power(h1, self.P_max, w1p)
+        s21_full_at1 = self._rx_power(g1, self.P_max, w2p)
+        s22_full = self._rx_power(h2, self.P_max, w2p)
+        s12_full_at2 = self._rx_power(g2, self.P_max, w1p)
+        sinr_p1_nors = s11_full / (s21_full_at1 + n0)
+        sinr_p2_nors = s22_full / (s12_full_at2 + n0)
+        r1_nors = np.log2(1.0 + sinr_p1_nors)
+        r2_nors = np.log2(1.0 + sinr_p2_nors)
+
         c1 = float(a1["beta_c"]) * r_c1
         c2 = float(a2["beta_c"]) * r_c2
         r1 = c1 + r_p1
         r2 = c2 + r_p2
         common_total = c1 + c2
+        fairness_term = 1.0 - abs(r1 - r2) / (r1 + r2 + 1e-10)
+        rsma_gain = (r1 + r2) - (r1_nors + r2_nors)
         if self.reward_type == "sum":
-            reward_raw = r1 + r2
+            reward_raw = (r1 + r2) + 0.5 * max(rsma_gain, 0.0) + self.beta_reward * fairness_term
         elif self.reward_type == "log":
-            reward_raw = np.log1p(max(r1, 0.0)) + np.log1p(max(r2, 0.0))
+            reward_raw = np.log1p(max(r1, 0.0)) + np.log1p(max(r2, 0.0)) + 0.5 * max(rsma_gain, 0.0)
         elif self.reward_type == "mmf":
-            reward_raw = (1.0 - self.beta_reward) * (r1 + r2) + self.beta_reward * min(r1, r2)
+            reward_raw = (
+                (1.0 - self.beta_reward) * (r1 + r2)
+                + self.beta_reward * min(r1, r2)
+                + 0.5 * max(rsma_gain, 0.0)
+                + 0.25 * self.beta_reward * fairness_term
+            )
         else:
             raise ValueError(f"Unsupported reward type: {self.reward_type}")
         reward = reward_raw
@@ -336,6 +353,7 @@ class RSMA_Env:
             "user_rates": np.array([r1, r2], dtype=float),
             "common_capacity": np.array([r_c1, r_c2], dtype=float),
             "common_total": float(common_total),
+            "rsma_gain": float(rsma_gain),
             "allocated_common_rates": np.array([c1, c2], dtype=float),
             "private_rates": np.array([r_p1, r_p2], dtype=float),
             "power_common": np.array([p1c, p2c], dtype=float),
@@ -400,6 +418,7 @@ class RSMA_Env:
             "common_capacity": best_result["common_capacity"].copy(),
             "allocated_common_rates": best_result["allocated_common_rates"].copy(),
             "common_total": float(best_result["common_total"]),
+            "rsma_gain": float(best_result["rsma_gain"]),
             "private_rates": best_result["private_rates"].copy(),
             "power_common": best_result["power_common"].copy(),
             "power_private": best_result["power_private"].copy(),
