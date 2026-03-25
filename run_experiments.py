@@ -96,7 +96,7 @@ def experiment_sum_rate_vs_snr(base_config: TrainConfig) -> None:
 
 
 def experiment_sum_rate_vs_antennas(base_config: TrainConfig) -> None:
-    antennas = np.arange(2, 9)
+    antennas = np.arange(2, 7)
     td3_rates, maddpg_rates = [], []
     noma_rates, sdma_rates, no_rs_rates = [], [], []
 
@@ -138,6 +138,42 @@ def experiment_csit_error(base_config: TrainConfig) -> None:
         td3_rsma=np.asarray(td3_rates),
         noma=np.asarray(noma_rates),
         sdma=np.asarray(sdma_rates),
+    )
+
+
+def experiment_interference_level(base_config: TrainConfig) -> None:
+    levels = np.arange(0.2, 1.51, 0.1)
+    td3_rates, maddpg_rates = [], []
+    noma_rates, sdma_rates, no_rs_rates = [], [], []
+
+    for level in levels:
+        cfg_td3 = TrainConfig(**{
+            **serialize_config(base_config),
+            "algorithm": "td3",
+            "interference_level": float(np.round(level, 2)),
+            "project": f"exp_interf_td3_{level:.1f}",
+        })
+        cfg_maddpg = TrainConfig(**{
+            **serialize_config(base_config),
+            "algorithm": "maddpg",
+            "interference_level": float(np.round(level, 2)),
+            "project": f"exp_interf_maddpg_{level:.1f}",
+        })
+        td3_rates.append(train_rsma(cfg_td3)["summary"]["final_avg_sum_rate"])
+        maddpg_rates.append(train_rsma(cfg_maddpg)["summary"]["final_avg_sum_rate"])
+        baselines = _mean_baselines(cfg_td3)
+        noma_rates.append(baselines["noma"])
+        sdma_rates.append(baselines["sdma"])
+        no_rs_rates.append(baselines["no_rs"])
+
+    np.savez(
+        "sum_rate_vs_interference.npz",
+        interference_level=levels,
+        td3_rsma=np.asarray(td3_rates),
+        maddpg_rsma=np.asarray(maddpg_rates),
+        noma=np.asarray(noma_rates),
+        sdma=np.asarray(sdma_rates),
+        no_rs=np.asarray(no_rs_rates),
     )
 
 
@@ -202,11 +238,11 @@ def main() -> None:
     set_global_seeds(42)
     base_config = TrainConfig(
         algorithm="td3",
-        M=4,
+        M=2,
         P_max_dBm=30.0,
         noise_power_dBm=-80.0,
         channel_type="rayleigh",
-        interference_level=0.5,
+        interference_level=1.0,
         reward_type="mmf",
         csit_error_std=0.0,
         episodes=500,
@@ -217,6 +253,7 @@ def main() -> None:
     experiment_sum_rate_vs_snr(base_config)
     experiment_sum_rate_vs_antennas(base_config)
     experiment_csit_error(base_config)
+    experiment_interference_level(base_config)
     experiment_convergence(base_config)
     experiment_fairness(base_config)
 

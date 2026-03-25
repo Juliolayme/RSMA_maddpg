@@ -105,6 +105,20 @@ def figure_power_and_split_behavior() -> None:
     _save(fig, "figure5_power_and_split_behavior")
 
 
+def figure_interference_level() -> None:
+    data = np.load("sum_rate_vs_interference.npz")
+    fig, ax = plt.subplots()
+    ax.plot(data["interference_level"], data["td3_rsma"], marker="o", linestyle="-", color=COLORS["td3"], label="TD3-RSMA")
+    ax.plot(data["interference_level"], data["maddpg_rsma"], marker="s", linestyle="--", color=COLORS["maddpg"], label="MADDPG-RSMA")
+    ax.plot(data["interference_level"], data["noma"], marker="^", linestyle=":", color=COLORS["noma"], label="NOMA")
+    ax.plot(data["interference_level"], data["sdma"], marker="d", linestyle="-.", color=COLORS["sdma"], label="SDMA")
+    ax.plot(data["interference_level"], data["no_rs"], marker="x", linestyle=":", color=COLORS["no_rs"], label="No-RS")
+    ax.set_xlabel("Interference level")
+    ax.set_ylabel("Sum-rate (bps/Hz)")
+    ax.legend(fontsize=9)
+    _save(fig, "figure6_sum_rate_vs_interference")
+
+
 def write_results_table() -> None:
     """Write a compact numerical summary table."""
     snr = np.load("sum_rate_vs_snr.npz")
@@ -133,6 +147,7 @@ def main() -> None:
         "convergence.npz",
         "sum_rate_vs_csit_error.npz",
         "fairness.npz",
+        "sum_rate_vs_interference.npz",
     ]
     missing = [path for path in required if not os.path.exists(path)]
     if missing:
@@ -142,6 +157,7 @@ def main() -> None:
     figure_csit_error()
     figure_fairness()
     figure_power_and_split_behavior()
+    figure_interference_level()
     write_results_table()
 
 

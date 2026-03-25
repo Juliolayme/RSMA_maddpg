@@ -75,9 +75,11 @@ def main() -> None:
     parser.add_argument("--noise", type=float, default=-80.0, dest="noise_power_dBm")
     parser.add_argument("--channel", type=str, default="rayleigh", dest="channel_type", choices=["rayleigh", "rician"])
     parser.add_argument("--correlation", type=float, default=0.0, dest="spatial_correlation")
+    parser.add_argument("--interference-level", type=float, default=0.5, dest="interference_level")
     parser.add_argument("--time-varying", action="store_true")
     parser.add_argument("--csit-error", type=float, default=0.0, dest="csit_error_std")
     parser.add_argument("--beta-reward", type=float, default=0.5, dest="beta_reward")
+    parser.add_argument("--reward-type", type=str, default="mmf", dest="reward_type", choices=["sum", "mmf", "log"])
     parser.add_argument("--steps", type=int, default=100)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--project", type=str, default=None)
@@ -95,9 +97,11 @@ def main() -> None:
         noise_power_dBm=args.noise_power_dBm,
         channel_type=args.channel_type,
         spatial_correlation=args.spatial_correlation,
+        interference_level=args.interference_level,
         time_varying=args.time_varying,
         csit_error_std=args.csit_error_std,
         beta_reward=args.beta_reward,
+        reward_type=args.reward_type,
         steps=args.steps,
         seed=args.seed,
         project=args.project,
