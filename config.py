@@ -17,9 +17,11 @@ class TrainConfig:
     noise_power_dBm: float = -80.0
     channel_type: str = "rayleigh"
     spatial_correlation: float = 0.0
+    interference_level: float = 0.5
     time_varying: bool = False
     csit_error_std: float = 0.0
     beta_reward: float = 0.5
+    reward_type: str = "mmf"
     episodes: int = 1000
     steps: int = 200
     seed: int = 42
@@ -41,8 +43,9 @@ class TrainConfig:
     lr_warmup_fraction: float = 0.1
     learning_starts: int = 1000
     max_grad_norm: float = 1.0
-    alpha_min: float = 0.05
+    alpha_min: float = 0.0
     agent_controls_decoding: bool = False
+    diagnose: bool = False
     eval_episodes: int = 1000
     outage_threshold: float = 0.5
     device: str = "cuda"
@@ -61,9 +64,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--noise", type=float, default=-80.0, dest="noise_power_dBm", help="Noise power in dBm")
     parser.add_argument("--channel", type=str, default="rayleigh", dest="channel_type", choices=["rayleigh", "rician"])
     parser.add_argument("--correlation", type=float, default=0.0, dest="spatial_correlation")
+    parser.add_argument("--interference-level", type=float, default=0.5, dest="interference_level")
     parser.add_argument("--time-varying", action="store_true")
     parser.add_argument("--csit-error", type=float, default=0.0, dest="csit_error_std")
     parser.add_argument("--beta-reward", type=float, default=0.5, dest="beta_reward")
+    parser.add_argument("--reward-type", type=str, default="mmf", dest="reward_type", choices=["sum", "mmf", "log"])
     parser.add_argument("--episodes", type=int, default=1000)
     parser.add_argument("--steps", type=int, default=200)
     parser.add_argument("--seed", type=int, default=42)
@@ -84,8 +89,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lr-warmup-fraction", type=float, default=0.1, dest="lr_warmup_fraction")
     parser.add_argument("--learning-starts", type=int, default=1000, dest="learning_starts")
     parser.add_argument("--max-grad-norm", type=float, default=1.0, dest="max_grad_norm")
-    parser.add_argument("--alpha-min", type=float, default=0.05, dest="alpha_min")
+    parser.add_argument("--alpha-min", type=float, default=0.0, dest="alpha_min")
     parser.add_argument("--agent-controls-decoding", action="store_true")
+    parser.add_argument("--diagnose", action="store_true")
     parser.add_argument("--eval-episodes", type=int, default=1000, dest="eval_episodes")
     parser.add_argument("--outage-threshold", type=float, default=0.5, dest="outage_threshold")
     parser.add_argument("--save-dir", type=str, default="results")

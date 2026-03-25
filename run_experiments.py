@@ -9,7 +9,7 @@ import numpy as np
 
 from config import TrainConfig
 from environment import RSMA_Env
-from main import train_rsma
+from main import run_diagnostic, train_rsma
 from utils import (
     compute_noma_sum_rate,
     compute_noma_metrics,
@@ -31,11 +31,14 @@ def _baseline_env(config: TrainConfig) -> RSMA_Env:
         noise_power_dBm=config.noise_power_dBm,
         channel_type=config.channel_type,
         spatial_correlation=config.spatial_correlation,
+        interference_level=config.interference_level,
         time_varying=config.time_varying,
         csit_error_std=config.csit_error_std,
         beta_reward=config.beta_reward,
+        reward_type=config.reward_type,
         step_num=config.steps,
         agent_controls_decoding=config.agent_controls_decoding,
+        alpha_min=config.alpha_min,
         seed=config.seed,
     )
 
@@ -203,11 +206,14 @@ def main() -> None:
         P_max_dBm=30.0,
         noise_power_dBm=-80.0,
         channel_type="rayleigh",
+        interference_level=0.5,
+        reward_type="mmf",
         csit_error_std=0.0,
         episodes=500,
         steps=200,
         project=None,
     )
+    run_diagnostic(base_config)
     experiment_sum_rate_vs_snr(base_config)
     experiment_sum_rate_vs_antennas(base_config)
     experiment_csit_error(base_config)

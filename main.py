@@ -27,6 +27,25 @@ from utils import (
 LOGGER = logging.getLogger("rsma.train")
 
 
+class RunningRewardNormalizer:
+    """Online reward normalization using running mean and variance."""
+
+    def __init__(self) -> None:
+        self.count = 0
+        self.mean = 0.0
+        self.m2 = 0.0
+
+    def normalize(self, value: float) -> float:
+        self.count += 1
+        delta = value - self.mean
+        self.mean += delta / self.count
+        delta2 = value - self.mean
+        self.m2 += delta * delta2
+        variance = self.m2 / max(self.count - 1, 1)
+        std = np.sqrt(max(variance, 1e-8))
+        return float((value - self.mean) / (std + 1e-8))
+
+
 def _create_environment(config: TrainConfig) -> RSMA_Env:
     return RSMA_Env(
         M=config.M,
@@ -34,9 +53,11 @@ def _create_environment(config: TrainConfig) -> RSMA_Env:
         noise_power_dBm=config.noise_power_dBm,
         channel_type=config.channel_type,
         spatial_correlation=config.spatial_correlation,
+        interference_level=config.interference_level,
         time_varying=config.time_varying,
         csit_error_std=config.csit_error_std,
         beta_reward=config.beta_reward,
+        reward_type=config.reward_type,
         step_num=config.steps,
         agent_controls_decoding=config.agent_controls_decoding,
         alpha_min=config.alpha_min,
@@ -146,6 +167,7 @@ def train_rsma(config: TrainConfig) -> Dict[str, object]:
 
     LOGGER.info("Starting training with %s", config.algorithm.upper())
     LOGGER.info("Environment: %s", env.get_system_info())
+    reward_normalizer = RunningRewardNormalizer()
 
     best_score = -np.inf
     best_running_avg = -np.inf
@@ -161,16 +183,26 @@ def train_rsma(config: TrainConfig) -> Dict[str, object]:
             epsilon = _epsilon_for_episode(config, episode_idx)
             if config.algorithm == "td3":
                 joint_action = agent.choose_action(state, noise_scale=epsilon)
+                if episode_idx < int(0.2 * config.episodes):
+                    for idx in range(env.num_agents):
+                        alpha = np.random.uniform(0.1, 0.9)
+                        joint_action[idx * env.per_agent_action_dim + 4 * env.M] = np.clip(2.0 * alpha - 1.0, -1.0, 1.0)
                 actions_n = _split_joint_action(env, joint_action)
                 next_obs_n, next_state, rewards_n, done, info = env.step(actions_n)
-                agent.remember(state, joint_action, rewards_n[0], next_state, done)
+                normalized_reward = reward_normalizer.normalize(float(info["reward_raw"]))
+                agent.remember(state, joint_action, normalized_reward, next_state, done)
             else:
                 actions_n = agent.choose_action(obs_n, noise_scale=epsilon)
+                if episode_idx < int(0.2 * config.episodes):
+                    for action in actions_n:
+                        alpha = np.random.uniform(0.1, 0.9)
+                        action[4 * env.M] = np.clip(2.0 * alpha - 1.0, -1.0, 1.0)
                 next_obs_n, next_state, rewards_n, done, info = env.step(actions_n)
-                agent.remember(obs_n, state, actions_n, rewards_n, next_obs_n, next_state, done)
+                normalized_reward = reward_normalizer.normalize(float(info["reward_raw"]))
+                agent.remember(obs_n, state, actions_n, [normalized_reward, normalized_reward], next_obs_n, next_state, done)
 
             agent.learn()
-            score += rewards_n[0]
+            score += float(info["reward_raw"])
             obs_n, state = next_obs_n, next_state
             last_info = info
             if done:
@@ -225,9 +257,22 @@ def train_rsma(config: TrainConfig) -> Dict[str, object]:
     }
 
 
+def run_diagnostic(config: TrainConfig) -> Dict[str, float]:
+    """Run and log RSMA advantage diagnostics for the current configuration."""
+    setup_logging()
+    set_global_seeds(config.seed)
+    env = _create_environment(config)
+    results = env.diagnose_rsma_advantage(num_samples=100)
+    LOGGER.info("Diagnostic results: %s", results)
+    return results
+
+
 def main() -> None:
     """CLI entry point."""
     config = parse_config()
+    if config.diagnose:
+        run_diagnostic(config)
+        return
     train_rsma(config)
 
 

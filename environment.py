@@ -63,10 +63,12 @@ class RSMA_Env:
         direct_distances: Tuple[float, float] = (80.0, 80.0),
         cross_distances: Tuple[float, float] = (120.0, 120.0),
         spatial_correlation: float = 0.0,
+        interference_level: float = 0.5,
         time_varying: bool = False,
         temporal_correlation: float = 0.9,
         csit_error_std: float = 0.0,
         beta_reward: float = 0.5,
+        reward_type: str = "mmf",
         step_num: int = 100,
         agent_controls_decoding: bool = False,
         alpha_min: float = 0.05,
@@ -85,10 +87,12 @@ class RSMA_Env:
         self.direct_distances = np.asarray(direct_distances, dtype=float)
         self.cross_distances = np.asarray(cross_distances, dtype=float)
         self.spatial_correlation = spatial_correlation
+        self.interference_level = interference_level
         self.time_varying = time_varying
         self.temporal_correlation = temporal_correlation
         self.csit_error_std = csit_error_std
         self.beta_reward = beta_reward
+        self.reward_type = reward_type
         self.step_num = step_num
         self.agent_controls_decoding = agent_controls_decoding
         self.alpha_min = alpha_min
@@ -144,13 +148,11 @@ class RSMA_Env:
     def _generate_channels(self) -> LinkChannels:
         direct_1 = compute_path_loss(self.direct_distances[0], self.frequency, self.path_loss_exp)
         direct_2 = compute_path_loss(self.direct_distances[1], self.frequency, self.path_loss_exp)
-        cross_1 = compute_path_loss(self.cross_distances[0], self.frequency, self.path_loss_exp)
-        cross_2 = compute_path_loss(self.cross_distances[1], self.frequency, self.path_loss_exp)
         return LinkChannels(
             h1=self._sample_channel_vector(direct_1),
-            g1=self._sample_channel_vector(cross_1),
+            g1=self.interference_level * self._sample_channel_vector(direct_1),
             h2=self._sample_channel_vector(direct_2),
-            g2=self._sample_channel_vector(cross_2),
+            g2=self.interference_level * self._sample_channel_vector(direct_2),
         )
 
     def _estimate_channels(self) -> None:
@@ -317,12 +319,19 @@ class RSMA_Env:
         r1 = c1 + r_p1
         r2 = c2 + r_p2
         common_total = c1 + c2
-        fairness_term = 1.0 - abs(r1 - r2) / (r1 + r2 + 1e-10)
-        reward_raw = (r1 + r2) + 0.1 * common_total + self.beta_reward * fairness_term
-        reward = np.log1p(max(reward_raw, 0.0))
+        if self.reward_type == "sum":
+            reward_raw = r1 + r2
+        elif self.reward_type == "log":
+            reward_raw = np.log1p(max(r1, 0.0)) + np.log1p(max(r2, 0.0))
+        elif self.reward_type == "mmf":
+            reward_raw = (1.0 - self.beta_reward) * (r1 + r2) + self.beta_reward * min(r1, r2)
+        else:
+            raise ValueError(f"Unsupported reward type: {self.reward_type}")
+        reward = reward_raw
 
         return {
             "reward": float(reward),
+            "reward_raw": float(reward_raw),
             "sum_rate": float(r1 + r2),
             "user_rates": np.array([r1, r2], dtype=float),
             "common_capacity": np.array([r_c1, r_c2], dtype=float),
@@ -385,6 +394,7 @@ class RSMA_Env:
 
         info = {
             "reward": reward,
+            "reward_raw": float(best_result["reward_raw"]),
             "sum_rate": float(best_result["sum_rate"]),
             "user_rates": best_result["user_rates"].copy(),
             "common_capacity": best_result["common_capacity"].copy(),
@@ -400,6 +410,78 @@ class RSMA_Env:
         }
         return next_obs, next_state, rewards, done, info
 
+    def _build_manual_actions(self, alpha: float, beta_c: float = 0.5) -> List[np.ndarray]:
+        """Construct simple MRT-based actions for RSMA diagnostics."""
+        if self.channels is None:
+            raise RuntimeError("Channels must be initialized before constructing actions.")
+
+        def make_action(channel: np.ndarray) -> np.ndarray:
+            wc = channel / (np.linalg.norm(channel) + 1e-10)
+            wp = channel / (np.linalg.norm(channel) + 1e-10)
+            action = np.zeros(self.per_agent_action_dim, dtype=np.float32)
+            action[: self.M] = wc.real
+            action[self.M: 2 * self.M] = wc.imag
+            action[2 * self.M: 3 * self.M] = wp.real
+            action[3 * self.M: 4 * self.M] = wp.imag
+            action[4 * self.M] = np.clip(2.0 * alpha - 1.0, -1.0, 1.0)
+            action[4 * self.M + 1] = np.clip(2.0 * beta_c - 1.0, -1.0, 1.0)
+            if self.agent_controls_decoding:
+                action[-1] = 1.0
+            return action
+
+        return [make_action(self.channels.h1), make_action(self.channels.h2)]
+
+    def diagnose_rsma_advantage(self, num_samples: int = 100) -> Dict[str, float]:
+        """Compare heuristic RSMA against private-only under current channels."""
+        alpha_grid = [0.0, 0.1, 0.3, 0.5, 0.7, 0.9]
+        rsma_rates: List[float] = []
+        no_rs_rates: List[float] = []
+        best_alphas: List[float] = []
+        direct_gains: List[float] = []
+        cross_gains: List[float] = []
+
+        for _ in range(num_samples):
+            self.reset()
+            direct_gains.append(float((np.mean(np.abs(self.channels.h1) ** 2) + np.mean(np.abs(self.channels.h2) ** 2)) / 2.0))
+            cross_gains.append(float((np.mean(np.abs(self.channels.g1) ** 2) + np.mean(np.abs(self.channels.g2) ** 2)) / 2.0))
+
+            best_rsma = -np.inf
+            best_alpha = 0.0
+            for alpha in alpha_grid:
+                actions = self._build_manual_actions(alpha=alpha, beta_c=0.5)
+                parsed = [self._parse_agent_action(action) for action in actions]
+                result = max(
+                    (self._compute_order_metrics(parsed, order) for order in ((0, 0), (0, 1), (1, 0), (1, 1))),
+                    key=lambda item: item["sum_rate"],
+                )
+                if float(result["sum_rate"]) > best_rsma:
+                    best_rsma = float(result["sum_rate"])
+                    best_alpha = alpha
+            rsma_rates.append(best_rsma)
+            best_alphas.append(best_alpha)
+
+            no_rs_actions = self._build_manual_actions(alpha=0.0, beta_c=0.0)
+            parsed_no_rs = [self._parse_agent_action(action) for action in no_rs_actions]
+            no_rs_result = max(
+                (self._compute_order_metrics(parsed_no_rs, order) for order in ((0, 0), (0, 1), (1, 0), (1, 1))),
+                key=lambda item: item["sum_rate"],
+            )
+            no_rs_rates.append(float(no_rs_result["sum_rate"]))
+
+        direct_gain = float(np.mean(direct_gains))
+        cross_gain = float(np.mean(cross_gains))
+        rsma_mean = float(np.mean(rsma_rates))
+        no_rs_mean = float(np.mean(no_rs_rates))
+        return {
+            "rsma_mean_sum_rate": rsma_mean,
+            "no_rs_mean_sum_rate": no_rs_mean,
+            "rsma_gain_over_no_rs_percent": 100.0 * (rsma_mean - no_rs_mean) / max(no_rs_mean, 1e-10),
+            "mean_best_alpha": float(np.mean(best_alphas)),
+            "mean_direct_gain": direct_gain,
+            "mean_cross_gain": cross_gain,
+            "approx_inr_db": float(10.0 * np.log10(cross_gain * self.P_max / (self.noise_power + 1e-12))),
+        }
+
     def get_system_info(self) -> Dict[str, float | int | bool]:
         """Return environment metadata for logging."""
         return {
@@ -408,6 +490,8 @@ class RSMA_Env:
             "P_max (dBm)": self.P_max_dBm,
             "Noise power (dBm)": self.noise_power_dBm,
             "Channel type": self.channel_type,
+            "Reward type": self.reward_type,
+            "Interference level": self.interference_level,
             "Observation dim": self.obs_dim,
             "Global state dim": self.state_dim,
             "Action dim per agent": self.per_agent_action_dim,
