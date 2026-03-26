@@ -121,6 +121,7 @@ def _build_agent(config: TrainConfig, env: RSMA_Env):
             exploration_noise=config.exploration_noise,
             learning_starts=config.learning_starts,
             max_grad_norm=config.max_grad_norm,
+            alpha_action_index=4 * env.M,
             checkpoint_dir=os.path.join(config.checkpoint_dir, "MADDPG"),
             checkpoint_name=_project_name(config),
         )

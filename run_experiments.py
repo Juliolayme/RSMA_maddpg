@@ -52,18 +52,24 @@ def _mean_baselines(config: TrainConfig, samples: int = 50) -> Dict[str, float]:
     }
 
 
+def _save_partial(path: str, **arrays) -> None:
+    """Save partial experiment results so progress survives interruptions."""
+    np.savez(path, **arrays)
+
+
 def experiment_sum_rate_vs_snr(base_config: TrainConfig) -> None:
-    snrs = np.arange(0.0, 45.0, 5.0)
+    snrs = np.asarray([0.0, 10.0, 20.0, 30.0, 40.0])
     td3_rates, maddpg_rates = [], []
     td3_std = []
     noma_rates, sdma_rates, no_rs_rates = [], [], []
     td3_alpha, td3_split = [], []
+    partial_path = "sum_rate_vs_snr_partial.npz"
 
     for p_max in snrs:
         td3_seed_results = []
         td3_alpha_seed = []
         td3_split_seed = []
-        for seed in base_config.seeds_for_curve[:3]:
+        for seed in base_config.seeds_for_curve[:2]:
             cfg_td3 = TrainConfig(**{**serialize_config(base_config), "algorithm": "td3", "P_max_dBm": float(p_max), "seed": int(seed), "project": f"exp1_td3_{int(p_max)}_seed{seed}"})
             td3_result = train_rsma(cfg_td3)
             td3_seed_results.append(td3_result["summary"]["final_avg_sum_rate"])
@@ -80,6 +86,18 @@ def experiment_sum_rate_vs_snr(base_config: TrainConfig) -> None:
         noma_rates.append(baselines["noma"])
         sdma_rates.append(baselines["sdma"])
         no_rs_rates.append(baselines["no_rs"])
+        _save_partial(
+            partial_path,
+            snr_dbm=snrs[: len(td3_rates)],
+            td3_rsma=np.asarray(td3_rates),
+            td3_rsma_std=np.asarray(td3_std),
+            maddpg_rsma=np.asarray(maddpg_rates),
+            noma=np.asarray(noma_rates),
+            sdma=np.asarray(sdma_rates),
+            no_rs=np.asarray(no_rs_rates),
+            learned_alpha=np.asarray(td3_alpha),
+            learned_common_split=np.asarray(td3_split),
+        )
 
     np.savez(
         "sum_rate_vs_snr.npz",
@@ -93,12 +111,15 @@ def experiment_sum_rate_vs_snr(base_config: TrainConfig) -> None:
         learned_alpha=np.asarray(td3_alpha),
         learned_common_split=np.asarray(td3_split),
     )
+    if os.path.exists(partial_path):
+        os.remove(partial_path)
 
 
 def experiment_sum_rate_vs_antennas(base_config: TrainConfig) -> None:
-    antennas = np.arange(2, 7)
+    antennas = np.asarray([2, 3, 4])
     td3_rates, maddpg_rates = [], []
     noma_rates, sdma_rates, no_rs_rates = [], [], []
+    partial_path = "sum_rate_vs_antennas_partial.npz"
 
     for m in antennas:
         cfg_td3 = TrainConfig(**{**serialize_config(base_config), "algorithm": "td3", "M": int(m), "project": f"exp2_td3_M{m}"})
@@ -109,6 +130,15 @@ def experiment_sum_rate_vs_antennas(base_config: TrainConfig) -> None:
         noma_rates.append(baselines["noma"])
         sdma_rates.append(baselines["sdma"])
         no_rs_rates.append(baselines["no_rs"])
+        _save_partial(
+            partial_path,
+            M=antennas[: len(td3_rates)],
+            td3_rsma=np.asarray(td3_rates),
+            maddpg_rsma=np.asarray(maddpg_rates),
+            noma=np.asarray(noma_rates),
+            sdma=np.asarray(sdma_rates),
+            no_rs=np.asarray(no_rs_rates),
+        )
 
     np.savez(
         "sum_rate_vs_antennas.npz",
@@ -119,11 +149,14 @@ def experiment_sum_rate_vs_antennas(base_config: TrainConfig) -> None:
         sdma=np.asarray(sdma_rates),
         no_rs=np.asarray(no_rs_rates),
     )
+    if os.path.exists(partial_path):
+        os.remove(partial_path)
 
 
 def experiment_csit_error(base_config: TrainConfig) -> None:
-    errors = np.arange(0.0, 0.35, 0.05)
+    errors = np.asarray([0.0, 0.1, 0.2, 0.3])
     td3_rates, noma_rates, sdma_rates = [], [], []
+    partial_path = "sum_rate_vs_csit_error_partial.npz"
 
     for error in errors:
         cfg = TrainConfig(**{**serialize_config(base_config), "algorithm": "td3", "csit_error_std": float(error), "project": f"exp3_td3_e{error:.2f}"})
@@ -131,6 +164,13 @@ def experiment_csit_error(base_config: TrainConfig) -> None:
         baselines = _mean_baselines(cfg)
         noma_rates.append(baselines["noma"])
         sdma_rates.append(baselines["sdma"])
+        _save_partial(
+            partial_path,
+            csit_error=errors[: len(td3_rates)],
+            td3_rsma=np.asarray(td3_rates),
+            noma=np.asarray(noma_rates),
+            sdma=np.asarray(sdma_rates),
+        )
 
     np.savez(
         "sum_rate_vs_csit_error.npz",
@@ -139,12 +179,15 @@ def experiment_csit_error(base_config: TrainConfig) -> None:
         noma=np.asarray(noma_rates),
         sdma=np.asarray(sdma_rates),
     )
+    if os.path.exists(partial_path):
+        os.remove(partial_path)
 
 
 def experiment_interference_level(base_config: TrainConfig) -> None:
-    levels = np.arange(0.2, 1.51, 0.1)
+    levels = np.asarray([0.2, 0.5, 0.8, 1.0, 1.2, 1.5])
     td3_rates, maddpg_rates = [], []
     noma_rates, sdma_rates, no_rs_rates = [], [], []
+    partial_path = "sum_rate_vs_interference_partial.npz"
 
     for level in levels:
         cfg_td3 = TrainConfig(**{
@@ -165,6 +208,15 @@ def experiment_interference_level(base_config: TrainConfig) -> None:
         noma_rates.append(baselines["noma"])
         sdma_rates.append(baselines["sdma"])
         no_rs_rates.append(baselines["no_rs"])
+        _save_partial(
+            partial_path,
+            interference_level=levels[: len(td3_rates)],
+            td3_rsma=np.asarray(td3_rates),
+            maddpg_rsma=np.asarray(maddpg_rates),
+            noma=np.asarray(noma_rates),
+            sdma=np.asarray(sdma_rates),
+            no_rs=np.asarray(no_rs_rates),
+        )
 
     np.savez(
         "sum_rate_vs_interference.npz",
@@ -175,14 +227,17 @@ def experiment_interference_level(base_config: TrainConfig) -> None:
         sdma=np.asarray(sdma_rates),
         no_rs=np.asarray(no_rs_rates),
     )
+    if os.path.exists(partial_path):
+        os.remove(partial_path)
 
 
 def experiment_convergence(base_config: TrainConfig) -> None:
     td3_curves, maddpg_curves = [], []
     noma_values, sdma_values = [], []
-    for seed in base_config.seeds_for_curve:
-        cfg_td3 = TrainConfig(**{**serialize_config(base_config), "algorithm": "td3", "seed": int(seed), "episodes": 1000, "steps": 200, "project": f"conv_td3_seed{seed}"})
-        cfg_maddpg = TrainConfig(**{**serialize_config(base_config), "algorithm": "maddpg", "seed": int(seed), "episodes": 1000, "steps": 200, "project": f"conv_maddpg_seed{seed}"})
+    partial_path = "convergence_partial.npz"
+    for seed in base_config.seeds_for_curve[:3]:
+        cfg_td3 = TrainConfig(**{**serialize_config(base_config), "algorithm": "td3", "seed": int(seed), "episodes": 500, "steps": 100, "project": f"conv_td3_seed{seed}"})
+        cfg_maddpg = TrainConfig(**{**serialize_config(base_config), "algorithm": "maddpg", "seed": int(seed), "episodes": 500, "steps": 100, "project": f"conv_maddpg_seed{seed}"})
         result_td3 = train_rsma(cfg_td3)
         result_maddpg = train_rsma(cfg_maddpg)
         td3_dir = result_td3["result_dir"]
@@ -192,6 +247,13 @@ def experiment_convergence(base_config: TrainConfig) -> None:
         baselines = _mean_baselines(cfg_td3)
         noma_values.append(baselines["noma"])
         sdma_values.append(baselines["sdma"])
+        _save_partial(
+            partial_path,
+            td3_curves=np.asarray(td3_curves, dtype=float),
+            maddpg_curves=np.asarray(maddpg_curves, dtype=float),
+            noma=np.asarray(noma_values, dtype=float),
+            sdma=np.asarray(sdma_values, dtype=float),
+        )
 
     np.savez(
         "convergence.npz",
@@ -200,12 +262,15 @@ def experiment_convergence(base_config: TrainConfig) -> None:
         noma=np.asarray(noma_values, dtype=float),
         sdma=np.asarray(sdma_values, dtype=float),
     )
+    if os.path.exists(partial_path):
+        os.remove(partial_path)
 
 
 def experiment_fairness(base_config: TrainConfig) -> None:
-    betas = np.arange(0.0, 1.01, 0.1)
+    betas = np.asarray([0.0, 0.25, 0.5, 0.75, 1.0])
     rsma_fairness, noma_fairness, sdma_fairness = [], [], []
     user_rate_pairs = []
+    partial_path = "fairness_partial.npz"
 
     for beta in betas:
         cfg = TrainConfig(**{**serialize_config(base_config), "algorithm": "td3", "beta_reward": float(beta), "project": f"fair_td3_beta{beta:.1f}"})
@@ -221,6 +286,14 @@ def experiment_fairness(base_config: TrainConfig) -> None:
         _ = compute_no_rs_metrics(env, num_samples=50)
         noma_fairness.append(jains_fairness_index(noma_metrics["user_rates"]))
         sdma_fairness.append(jains_fairness_index(sdma_metrics["user_rates"]))
+        _save_partial(
+            partial_path,
+            beta=betas[: len(rsma_fairness)],
+            rsma_fairness=np.asarray(rsma_fairness),
+            noma_fairness=np.asarray(noma_fairness),
+            sdma_fairness=np.asarray(sdma_fairness),
+            rsma_user_rates=np.asarray(user_rate_pairs),
+        )
 
     np.savez(
         "fairness.npz",
@@ -230,6 +303,8 @@ def experiment_fairness(base_config: TrainConfig) -> None:
         sdma_fairness=np.asarray(sdma_fairness),
         rsma_user_rates=np.asarray(user_rate_pairs),
     )
+    if os.path.exists(partial_path):
+        os.remove(partial_path)
 
 
 def main() -> None:
@@ -245,17 +320,23 @@ def main() -> None:
         interference_level=1.0,
         reward_type="mmf",
         csit_error_std=0.0,
-        episodes=500,
-        steps=200,
+        episodes=300,
+        steps=100,
         project=None,
     )
     run_diagnostic(base_config)
-    experiment_sum_rate_vs_snr(base_config)
-    experiment_sum_rate_vs_antennas(base_config)
-    experiment_csit_error(base_config)
-    experiment_interference_level(base_config)
-    experiment_convergence(base_config)
-    experiment_fairness(base_config)
+    if not os.path.exists("sum_rate_vs_snr.npz"):
+        experiment_sum_rate_vs_snr(base_config)
+    if not os.path.exists("sum_rate_vs_antennas.npz"):
+        experiment_sum_rate_vs_antennas(base_config)
+    if not os.path.exists("sum_rate_vs_csit_error.npz"):
+        experiment_csit_error(base_config)
+    if not os.path.exists("sum_rate_vs_interference.npz"):
+        experiment_interference_level(base_config)
+    if not os.path.exists("convergence.npz"):
+        experiment_convergence(base_config)
+    if not os.path.exists("fairness.npz"):
+        experiment_fairness(base_config)
 
 
 if __name__ == "__main__":

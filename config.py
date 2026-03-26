@@ -12,12 +12,12 @@ class TrainConfig:
     """Training and evaluation configuration."""
 
     algorithm: str = "td3"
-    M: int = 4
+    M: int = 2
     P_max_dBm: float = 30.0
     noise_power_dBm: float = -80.0
     channel_type: str = "rayleigh"
     spatial_correlation: float = 0.0
-    interference_level: float = 0.5
+    interference_level: float = 1.0
     time_varying: bool = False
     csit_error_std: float = 0.0
     beta_reward: float = 0.5
@@ -59,12 +59,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     """Create the CLI parser shared by training and helper scripts."""
     parser = argparse.ArgumentParser(description="RSMA DRL training and evaluation")
     parser.add_argument("--algorithm", type=str, default="td3", choices=["td3", "maddpg"])
-    parser.add_argument("--M", type=int, default=4, help="Antennas per BS")
+    parser.add_argument("--M", type=int, default=2, help="Antennas per BS")
     parser.add_argument("--P-max", type=float, default=30.0, dest="P_max_dBm", help="Maximum transmit power per BS in dBm")
     parser.add_argument("--noise", type=float, default=-80.0, dest="noise_power_dBm", help="Noise power in dBm")
     parser.add_argument("--channel", type=str, default="rayleigh", dest="channel_type", choices=["rayleigh", "rician"])
     parser.add_argument("--correlation", type=float, default=0.0, dest="spatial_correlation")
-    parser.add_argument("--interference-level", type=float, default=0.5, dest="interference_level")
+    parser.add_argument("--interference-level", type=float, default=1.0, dest="interference_level")
     parser.add_argument("--time-varying", action="store_true")
     parser.add_argument("--csit-error", type=float, default=0.0, dest="csit_error_std")
     parser.add_argument("--beta-reward", type=float, default=0.5, dest="beta_reward")

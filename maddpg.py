@@ -31,6 +31,7 @@ class MADDPGConfig:
     exploration_noise: float = 0.2
     learning_starts: int = 1000
     max_grad_norm: float = 1.0
+    alpha_action_index: int = -2
     checkpoint_dir: str = "tmp/MADDPG"
     checkpoint_name: str = "rsma_maddpg"
 
@@ -112,6 +113,18 @@ class MLP(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
 
+    def set_output_bias(self, index: int, value: float) -> None:
+        """Set one output bias value in the final linear layer."""
+        final_layer = None
+        for module in reversed(self.net):
+            if isinstance(module, nn.Linear):
+                final_layer = module
+                break
+        if final_layer is None or not (0 <= index < final_layer.bias.numel()):
+            return
+        with torch.no_grad():
+            final_layer.bias[index] = value
+
 
 class AgentNetworks:
     """Actor-critic pair for one MADDPG agent."""
@@ -125,6 +138,7 @@ class AgentNetworks:
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=config.actor_lr)
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=config.critic_lr)
         self.name_prefix = os.path.join(config.checkpoint_dir, f"{config.checkpoint_name}_agent{agent_idx}")
+        self.actor.set_output_bias(config.alpha_action_index, 0.0)
         self.target_actor.load_state_dict(self.actor.state_dict())
         self.target_critic.load_state_dict(self.critic.state_dict())
 
@@ -218,7 +232,9 @@ class MADDPG:
                     actor_actions.append(actions[:, other_idx, :].detach())
             actor_actions = torch.cat(actor_actions, dim=1)
             actor_input = torch.cat([state, actor_actions], dim=1)
-            actor_loss = -agent.critic(actor_input).mean()
+            alpha = actor_actions[:, idx * self.config.action_dim + self.config.alpha_action_index]
+            alpha_reg = 0.01 * ((alpha - 0.0) ** 2).mean()
+            actor_loss = -agent.critic(actor_input).mean() + alpha_reg
             agent.actor_optimizer.zero_grad()
             actor_loss.backward()
             torch.nn.utils.clip_grad_norm_(agent.actor.parameters(), self.config.max_grad_norm)
