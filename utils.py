@@ -215,6 +215,7 @@ def compute_noma_metrics(env: Any, num_samples: int = 1) -> Dict[str, np.ndarray
     """
     results = []
     user_rates = []
+    fairness_values = []
     for _ in range(num_samples):
         env.reset()
         h1, g1, h2, g2 = _link_channels(env)
@@ -232,9 +233,11 @@ def compute_noma_metrics(env: Any, num_samples: int = 1) -> Dict[str, np.ndarray
         rate_2 = np.log2(1.0 + sig2 / (int2 + env.noise_power))
         results.append(rate_1 + rate_2)
         user_rates.append([rate_1, rate_2])
+        fairness_values.append(jains_fairness_index(np.asarray([rate_1, rate_2], dtype=float)))
     return {
         "sum_rate": float(np.mean(results)),
         "user_rates": np.mean(np.asarray(user_rates, dtype=float), axis=0),
+        "fairness": float(np.mean(fairness_values)),
     }
 
 
@@ -247,6 +250,7 @@ def compute_sdma_metrics(env: Any, num_samples: int = 1) -> Dict[str, np.ndarray
     """Compute a ZF-based SDMA baseline with equal power allocation."""
     results = []
     user_rates = []
+    fairness_values = []
     for _ in range(num_samples):
         env.reset()
         h1, g1, h2, g2 = _link_channels(env)
@@ -260,9 +264,11 @@ def compute_sdma_metrics(env: Any, num_samples: int = 1) -> Dict[str, np.ndarray
         rate_2 = np.log2(1.0 + sig2 / (int2 + env.noise_power))
         results.append(rate_1 + rate_2)
         user_rates.append([rate_1, rate_2])
+        fairness_values.append(jains_fairness_index(np.asarray([rate_1, rate_2], dtype=float)))
     return {
         "sum_rate": float(np.mean(results)),
         "user_rates": np.mean(np.asarray(user_rates, dtype=float), axis=0),
+        "fairness": float(np.mean(fairness_values)),
     }
 
 
@@ -275,6 +281,7 @@ def compute_no_rs_metrics(env: Any, num_samples: int = 1) -> Dict[str, np.ndarra
     """Compute a private-only baseline with MRT beamforming and no common stream."""
     results = []
     user_rates = []
+    fairness_values = []
     for _ in range(num_samples):
         env.reset()
         h1, g1, h2, g2 = _link_channels(env)
@@ -286,9 +293,11 @@ def compute_no_rs_metrics(env: Any, num_samples: int = 1) -> Dict[str, np.ndarra
         rate_2 = np.log2(1.0 + p2 * np.abs(np.vdot(h2, w2)) ** 2 / (p1 * np.abs(np.vdot(g2, w1)) ** 2 + env.noise_power))
         results.append(rate_1 + rate_2)
         user_rates.append([rate_1, rate_2])
+        fairness_values.append(jains_fairness_index(np.asarray([rate_1, rate_2], dtype=float)))
     return {
         "sum_rate": float(np.mean(results)),
         "user_rates": np.mean(np.asarray(user_rates, dtype=float), axis=0),
+        "fairness": float(np.mean(fairness_values)),
     }
 
 

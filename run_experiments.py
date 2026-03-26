@@ -155,12 +155,23 @@ def experiment_sum_rate_vs_antennas(base_config: TrainConfig) -> None:
 
 def experiment_csit_error(base_config: TrainConfig) -> None:
     errors = np.asarray([0.0, 0.1, 0.2, 0.3])
-    td3_rates, noma_rates, sdma_rates = [], [], []
+    td3_rates, td3_std, noma_rates, sdma_rates = [], [], [], []
     partial_path = "sum_rate_vs_csit_error_partial.npz"
 
     for error in errors:
-        cfg = TrainConfig(**{**serialize_config(base_config), "algorithm": "td3", "csit_error_std": float(error), "project": f"exp3_td3_e{error:.2f}"})
-        td3_rates.append(train_rsma(cfg)["summary"]["final_avg_sum_rate"])
+        td3_seed_results = []
+        cfg = None
+        for seed in base_config.seeds_for_curve[:3]:
+            cfg = TrainConfig(**{
+                **serialize_config(base_config),
+                "algorithm": "td3",
+                "csit_error_std": float(error),
+                "seed": int(seed),
+                "project": f"exp3_td3_e{error:.2f}_seed{seed}",
+            })
+            td3_seed_results.append(train_rsma(cfg)["summary"]["final_avg_sum_rate"])
+        td3_rates.append(float(np.mean(td3_seed_results)))
+        td3_std.append(float(np.std(td3_seed_results)))
         baselines = _mean_baselines(cfg)
         noma_rates.append(baselines["noma"])
         sdma_rates.append(baselines["sdma"])
@@ -168,6 +179,7 @@ def experiment_csit_error(base_config: TrainConfig) -> None:
             partial_path,
             csit_error=errors[: len(td3_rates)],
             td3_rsma=np.asarray(td3_rates),
+            td3_rsma_std=np.asarray(td3_std),
             noma=np.asarray(noma_rates),
             sdma=np.asarray(sdma_rates),
         )
@@ -176,6 +188,7 @@ def experiment_csit_error(base_config: TrainConfig) -> None:
         "sum_rate_vs_csit_error.npz",
         csit_error=errors,
         td3_rsma=np.asarray(td3_rates),
+        td3_rsma_std=np.asarray(td3_std),
         noma=np.asarray(noma_rates),
         sdma=np.asarray(sdma_rates),
     )
@@ -236,8 +249,8 @@ def experiment_convergence(base_config: TrainConfig) -> None:
     noma_values, sdma_values = [], []
     partial_path = "convergence_partial.npz"
     for seed in base_config.seeds_for_curve[:3]:
-        cfg_td3 = TrainConfig(**{**serialize_config(base_config), "algorithm": "td3", "seed": int(seed), "episodes": 500, "steps": 100, "project": f"conv_td3_seed{seed}"})
-        cfg_maddpg = TrainConfig(**{**serialize_config(base_config), "algorithm": "maddpg", "seed": int(seed), "episodes": 500, "steps": 100, "project": f"conv_maddpg_seed{seed}"})
+        cfg_td3 = TrainConfig(**{**serialize_config(base_config), "algorithm": "td3", "seed": int(seed), "episodes": 800, "steps": 200, "project": f"conv_td3_seed{seed}"})
+        cfg_maddpg = TrainConfig(**{**serialize_config(base_config), "algorithm": "maddpg", "seed": int(seed), "episodes": 800, "steps": 200, "project": f"conv_maddpg_seed{seed}"})
         result_td3 = train_rsma(cfg_td3)
         result_maddpg = train_rsma(cfg_maddpg)
         td3_dir = result_td3["result_dir"]
@@ -284,8 +297,8 @@ def experiment_fairness(base_config: TrainConfig) -> None:
         noma_metrics = compute_noma_metrics(env, num_samples=50)
         sdma_metrics = compute_sdma_metrics(env, num_samples=50)
         _ = compute_no_rs_metrics(env, num_samples=50)
-        noma_fairness.append(jains_fairness_index(noma_metrics["user_rates"]))
-        sdma_fairness.append(jains_fairness_index(sdma_metrics["user_rates"]))
+        noma_fairness.append(float(noma_metrics["fairness"]))
+        sdma_fairness.append(float(sdma_metrics["fairness"]))
         _save_partial(
             partial_path,
             beta=betas[: len(rsma_fairness)],
@@ -320,8 +333,9 @@ def main() -> None:
         interference_level=1.0,
         reward_type="mmf",
         csit_error_std=0.0,
-        episodes=300,
-        steps=100,
+        episodes=800,
+        steps=200,
+        hidden_dims=(512, 512, 256),
         project=None,
     )
     run_diagnostic(base_config)
