@@ -130,10 +130,10 @@ def _build_agent(config: TrainConfig, env: RSMA_Env):
 
 def _baseline_snapshot(env: RSMA_Env) -> Dict[str, float]:
     return {
-        "noma": compute_noma_sum_rate(env, num_samples=20),
-        "sdma": compute_sdma_sum_rate(env, num_samples=20),
-        "no_rs": compute_no_rs_sum_rate(env, num_samples=20),
-        "random": compute_random_baseline(env, num_samples=20),
+        "noma": compute_noma_sum_rate(env, num_samples=5),
+        "sdma": compute_sdma_sum_rate(env, num_samples=5),
+        "no_rs": compute_no_rs_sum_rate(env, num_samples=5),
+        "random": compute_random_baseline(env, num_samples=5),
     }
 
 
@@ -182,34 +182,14 @@ def train_rsma(config: TrainConfig) -> Dict[str, object]:
         agent.set_learning_rates(config.actor_lr * scale, config.critic_lr * scale)
         for _ in range(config.steps):
             epsilon = _epsilon_for_episode(config, episode_idx)
-            warmup_alpha_phase = episode_idx < int(0.4 * config.episodes)
-            occasional_alpha_exploration = (
-                episode_idx >= int(0.4 * config.episodes) and np.random.random() < 0.1
-            )
             if config.algorithm == "td3":
                 joint_action = agent.choose_action(state, noise_scale=epsilon)
-                if warmup_alpha_phase:
-                    for idx in range(env.num_agents):
-                        alpha = np.random.uniform(0.2, 0.8)
-                        joint_action[idx * env.per_agent_action_dim + 4 * env.M] = np.clip(2.0 * alpha - 1.0, -1.0, 1.0)
-                elif occasional_alpha_exploration:
-                    for idx in range(env.num_agents):
-                        alpha = np.random.uniform(0.1, 0.9)
-                        joint_action[idx * env.per_agent_action_dim + 4 * env.M] = np.clip(2.0 * alpha - 1.0, -1.0, 1.0)
                 actions_n = _split_joint_action(env, joint_action)
                 next_obs_n, next_state, rewards_n, done, info = env.step(actions_n)
                 normalized_reward = reward_normalizer.normalize(float(info["reward_raw"]))
                 agent.remember(state, joint_action, normalized_reward, next_state, done)
             else:
                 actions_n = agent.choose_action(obs_n, noise_scale=epsilon)
-                if warmup_alpha_phase:
-                    for action in actions_n:
-                        alpha = np.random.uniform(0.2, 0.8)
-                        action[4 * env.M] = np.clip(2.0 * alpha - 1.0, -1.0, 1.0)
-                elif occasional_alpha_exploration:
-                    for action in actions_n:
-                        alpha = np.random.uniform(0.1, 0.9)
-                        action[4 * env.M] = np.clip(2.0 * alpha - 1.0, -1.0, 1.0)
                 next_obs_n, next_state, rewards_n, done, info = env.step(actions_n)
                 normalized_reward = reward_normalizer.normalize(float(info["reward_raw"]))
                 agent.remember(obs_n, state, actions_n, [normalized_reward, normalized_reward], next_obs_n, next_state, done)
@@ -222,9 +202,10 @@ def train_rsma(config: TrainConfig) -> Dict[str, object]:
                 break
 
         logger.log_episode(episode_idx, env.history, score)
-        baselines = _baseline_snapshot(env)
-        for name, value in baselines.items():
-            logger.log_baseline(name, value)
+        if (episode_idx + 1) % 20 == 0 or episode_idx == config.episodes - 1:
+            baselines = _baseline_snapshot(env)
+            for name, value in baselines.items():
+                logger.log_baseline(name, value)
 
         current_running_avg = logger.running_avg_sum_rate[-1] if logger.running_avg_sum_rate else -np.inf
         if current_running_avg > best_running_avg:

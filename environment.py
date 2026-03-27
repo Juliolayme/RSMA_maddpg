@@ -329,21 +329,24 @@ class RSMA_Env:
         r1 = c1 + r_p1
         r2 = c2 + r_p2
         common_total = c1 + c2
-        fairness_term = 1.0 - abs(r1 - r2) / (r1 + r2 + 1e-10)
-        rsma_gain = (r1 + r2) - (r1_nors + r2_nors)
-        if self.reward_type == "sum":
-            reward_raw = (r1 + r2) + 0.5 * max(rsma_gain, 0.0) + self.beta_reward * fairness_term
-        elif self.reward_type == "log":
-            reward_raw = np.log1p(max(r1, 0.0)) + np.log1p(max(r2, 0.0)) + 0.5 * max(rsma_gain, 0.0)
-        elif self.reward_type == "mmf":
-            reward_raw = (
-                (1.0 - self.beta_reward) * (r1 + r2)
-                + self.beta_reward * min(r1, r2)
-                + 0.5 * max(rsma_gain, 0.0)
-                + 0.25 * self.beta_reward * fairness_term
-            )
+        sum_rate = r1 + r2
+        min_rate = min(r1, r2)
+        common_fraction = common_total / (sum_rate + 1e-10)
+        common_bonus = 0.2 * common_fraction
+        fairness_term = 1.0 - abs(r1 - r2) / (sum_rate + 1e-10)
+        rsma_gain = sum_rate - (r1_nors + r2_nors)
+        if self.reward_type == "mmf":
+            reward_raw = min_rate + 0.3 * sum_rate + common_bonus + self.beta_reward * fairness_term
+        elif self.reward_type == "sum":
+            reward_raw = sum_rate + common_bonus + self.beta_reward * fairness_term
         else:
-            raise ValueError(f"Unsupported reward type: {self.reward_type}")
+            reward_raw = np.log1p(sum_rate) + common_bonus + self.beta_reward * fairness_term
+        if rsma_gain > 0:
+            reward_raw += 0.1 * rsma_gain
+        if common_total <= 1e-8:
+            reward_raw -= 0.05
+        else:
+            reward_raw += 0.05 * common_fraction
         reward = reward_raw
 
         return {
