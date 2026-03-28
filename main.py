@@ -153,12 +153,37 @@ def _lr_scale(config: TrainConfig, episode_idx: int) -> float:
     return 0.5 * (1.0 + np.cos(np.pi * anneal_progress))
 
 
-def train_rsma(config: TrainConfig) -> Dict[str, object]:
-    """Train TD3 or MADDPG on the RSMA environment and save results."""
+def train_rsma(config: TrainConfig, pretrained_project: str = None) -> Dict[str, object]:
+    """Train TD3 or MADDPG on the RSMA environment and save results.
+
+    Args:
+        config: Training configuration.
+        pretrained_project: If provided, load weights from this project as warm start.
+    """
     setup_logging()
     set_global_seeds(config.seed)
     env = _create_environment(config)
     agent = _build_agent(config, env)
+    if pretrained_project is not None:
+        try:
+            subdir = "MADDPG" if config.algorithm == "maddpg" else "TD3"
+            original_dir = os.path.join(config.checkpoint_dir, subdir)
+            # Temporarily swap checkpoint name to load pretrained weights
+            pretrained_prefix = os.path.join(original_dir, pretrained_project)
+            if config.algorithm == "maddpg":
+                for idx, ag in enumerate(agent.agents):
+                    ag.name_prefix = pretrained_prefix + f"_agent{idx}"
+                agent.load_models()
+                # Restore original name prefix for saving
+                for idx, ag in enumerate(agent.agents):
+                    ag.name_prefix = os.path.join(original_dir, f"{_project_name(config)}_agent{idx}")
+            else:
+                agent.checkpoint_prefix = pretrained_prefix
+                agent.load_models()
+                agent.checkpoint_prefix = os.path.join(original_dir, _project_name(config))
+            LOGGER.info("Loaded pretrained weights from %s", pretrained_project)
+        except Exception as e:
+            LOGGER.warning("Could not load pretrained weights: %s. Training from scratch.", e)
     project_name = _project_name(config)
     logger = DataLogger(save_dir=config.save_dir, project_name=project_name)
     logger.save_meta({

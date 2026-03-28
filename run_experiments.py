@@ -113,15 +113,31 @@ def experiment_sum_rate_vs_snr(base_config: TrainConfig) -> None:
     noma_rates, sdma_rates, no_rs_rates = [], [], []
     partial_path = "sum_rate_vs_snr_partial.npz"
 
+    # Train anchor model at P_max=30 dBm first (full episodes)
+    anchor_project = "snr_maddpg_30"
+    anchor_cfg = TrainConfig(**{
+        **serialize_config(base_config),
+        "algorithm": "maddpg",
+        "P_max_dBm": 30.0,
+        "project": anchor_project,
+    })
+    anchor_result = train_rsma(anchor_cfg)
+
     for p_max in snrs:
-        cfg = TrainConfig(**{
-            **serialize_config(base_config),
-            "algorithm": "maddpg",
-            "P_max_dBm": float(p_max),
-            "project": f"snr_maddpg_{int(p_max)}",
-        })
-        result = train_rsma(cfg)
-        baselines = _mean_baselines(cfg)
+        if int(p_max) == 30:
+            # Reuse anchor result
+            result = anchor_result
+            baselines = _mean_baselines(anchor_cfg)
+        else:
+            cfg = TrainConfig(**{
+                **serialize_config(base_config),
+                "algorithm": "maddpg",
+                "P_max_dBm": float(p_max),
+                "episodes": max(200, base_config.episodes // 2),
+                "project": f"snr_maddpg_{int(p_max)}",
+            })
+            result = train_rsma(cfg, pretrained_project=anchor_project)
+            baselines = _mean_baselines(cfg)
         maddpg_rates.append(result["summary"]["final_avg_sum_rate"])
         maddpg_alpha.append(result["summary"]["final_avg_power_common_ratio"])
         maddpg_split.append(result["summary"]["final_avg_common_split_ratio"])
@@ -158,15 +174,30 @@ def experiment_sum_rate_vs_interference(base_config: TrainConfig) -> None:
     maddpg_rates, noma_rates, sdma_rates, no_rs_rates = [], [], [], []
     partial_path = "sum_rate_vs_interference_partial.npz"
 
+    # Train anchor at interference=1.0 first
+    anchor_project = "interf_maddpg_1.0"
+    anchor_cfg = TrainConfig(**{
+        **serialize_config(base_config),
+        "algorithm": "maddpg",
+        "interference_level": 1.0,
+        "project": anchor_project,
+    })
+    anchor_result = train_rsma(anchor_cfg)
+
     for level in levels:
-        cfg = TrainConfig(**{
-            **serialize_config(base_config),
-            "algorithm": "maddpg",
-            "interference_level": float(level),
-            "project": f"interf_maddpg_{level:.1f}",
-        })
-        result = train_rsma(cfg)
-        baselines = _mean_baselines(cfg)
+        if abs(level - 1.0) < 0.01:
+            result = anchor_result
+            baselines = _mean_baselines(anchor_cfg)
+        else:
+            cfg = TrainConfig(**{
+                **serialize_config(base_config),
+                "algorithm": "maddpg",
+                "interference_level": float(level),
+                "episodes": max(200, base_config.episodes // 2),
+                "project": f"interf_maddpg_{level:.1f}",
+            })
+            result = train_rsma(cfg, pretrained_project=anchor_project)
+            baselines = _mean_baselines(cfg)
         maddpg_rates.append(result["summary"]["final_avg_sum_rate"])
         noma_rates.append(baselines["noma"])
         sdma_rates.append(baselines["sdma"])

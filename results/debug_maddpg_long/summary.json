@@ -1,0 +1,12 @@
+{
+  "total_episodes": 60,
+  "final_avg_reward": 71.68515387813083,
+  "final_avg_sum_rate": 2.7463222804462264,
+  "final_avg_common_rate": 0.37115684894000306,
+  "final_avg_common_power_ratio": 0.5277447787349474,
+  "final_avg_common_split_ratio": 0.6413910910039977,
+  "final_avg_common_fraction": 0.16406184785625513,
+  "final_avg_alpha": 0.5277447787613346,
+  "final_avg_fairness": 0.7941138467135805,
+  "best_sum_rate": 2.847061513039739
+}

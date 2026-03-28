@@ -164,6 +164,12 @@ class MADDPG:
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.memory = ReplayBuffer(config.max_size, config.state_dim, config.obs_dim, config.action_dim, config.num_agents)
         self.agents = [AgentNetworks(config, idx, self.device) for idx in range(config.num_agents)]
+        # Symmetric initialization: copy agent 0 weights to agent 1
+        if config.num_agents == 2:
+            self.agents[1].actor.load_state_dict(self.agents[0].actor.state_dict())
+            self.agents[1].target_actor.load_state_dict(self.agents[0].target_actor.state_dict())
+            self.agents[1].critic.load_state_dict(self.agents[0].critic.state_dict())
+            self.agents[1].target_critic.load_state_dict(self.agents[0].target_critic.state_dict())
         self.noises = [OUNoise(config.action_dim) for _ in range(config.num_agents)]
         self.base_actor_lr = config.actor_lr
         self.base_critic_lr = config.critic_lr
@@ -232,9 +238,7 @@ class MADDPG:
                     actor_actions.append(actions[:, other_idx, :].detach())
             actor_actions = torch.cat(actor_actions, dim=1)
             actor_input = torch.cat([state, actor_actions], dim=1)
-            alpha = actor_actions[:, idx * self.config.action_dim + self.config.alpha_action_index]
-            alpha_reg = 0.01 * ((alpha - 0.0) ** 2).mean()
-            actor_loss = -agent.critic(actor_input).mean() + alpha_reg
+            actor_loss = -agent.critic(actor_input).mean()
             agent.actor_optimizer.zero_grad()
             actor_loss.backward()
             torch.nn.utils.clip_grad_norm_(agent.actor.parameters(), self.config.max_grad_norm)
