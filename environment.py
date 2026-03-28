@@ -334,14 +334,32 @@ class RSMA_Env:
         common_fraction = common_total / (sum_rate + 1e-10)
         fairness_term = 1.0 - abs(r1 - r2) / (sum_rate + 1e-10)
         rsma_gain = sum_rate - (r1_nors + r2_nors)
-        # Only reward common stream usage when it ACTUALLY improves rates
-        rsma_bonus = max(rsma_gain, 0.0) * 0.5
-        if self.reward_type == "mmf":
-            reward_raw = min_rate + 0.3 * sum_rate + self.beta_reward * fairness_term + rsma_bonus
-        elif self.reward_type == "sum":
-            reward_raw = sum_rate + self.beta_reward * fairness_term + rsma_bonus
+
+        # --- Reward shaping for balanced RSMA ---
+        # 1. RSMA gain bonus (only when common stream actually helps)
+        rsma_bonus = max(rsma_gain, 0.0) * 0.3
+
+        # 2. Alpha symmetry penalty: penalize |alpha1 - alpha2| to prevent
+        #    one agent hogging all common power while other goes private-only
+        alpha1 = float(a1["alpha"])
+        alpha2 = float(a2["alpha"])
+        alpha_imbalance = abs(alpha1 - alpha2)
+        symmetry_penalty = -0.3 * alpha_imbalance
+
+        # 3. Common split balance: penalize when split is extreme (0 or 1)
+        #    Ideal split should be near 0.5 for balanced common rate allocation
+        if common_total > 1e-8:
+            split_ratio = c1 / (common_total + 1e-10)
+            split_balance = -0.1 * abs(split_ratio - 0.5)
         else:
-            reward_raw = np.log1p(sum_rate) + self.beta_reward * fairness_term + rsma_bonus
+            split_balance = 0.0
+
+        if self.reward_type == "mmf":
+            reward_raw = min_rate + 0.3 * sum_rate + self.beta_reward * fairness_term + rsma_bonus + symmetry_penalty + split_balance
+        elif self.reward_type == "sum":
+            reward_raw = sum_rate + self.beta_reward * fairness_term + rsma_bonus + symmetry_penalty + split_balance
+        else:
+            reward_raw = np.log1p(sum_rate) + self.beta_reward * fairness_term + rsma_bonus + symmetry_penalty + split_balance
         reward = reward_raw
 
         return {
