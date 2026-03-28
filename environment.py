@@ -334,12 +334,14 @@ class RSMA_Env:
         common_fraction = common_total / (sum_rate + 1e-10)
         fairness_term = 1.0 - abs(r1 - r2) / (sum_rate + 1e-10)
         rsma_gain = sum_rate - (r1_nors + r2_nors)
+        # Only reward common stream usage when it ACTUALLY improves rates
+        rsma_bonus = max(rsma_gain, 0.0) * 0.5
         if self.reward_type == "mmf":
-            reward_raw = min_rate + 0.3 * sum_rate + self.beta_reward * fairness_term
+            reward_raw = min_rate + 0.3 * sum_rate + self.beta_reward * fairness_term + rsma_bonus
         elif self.reward_type == "sum":
-            reward_raw = sum_rate + self.beta_reward * fairness_term
+            reward_raw = sum_rate + self.beta_reward * fairness_term + rsma_bonus
         else:
-            reward_raw = np.log1p(sum_rate) + self.beta_reward * fairness_term
+            reward_raw = np.log1p(sum_rate) + self.beta_reward * fairness_term + rsma_bonus
         reward = reward_raw
 
         return {
